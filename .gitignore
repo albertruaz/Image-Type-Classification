@@ -1,0 +1,13 @@
+.env
+data/
+example/
+test_result/
+results/
+test_result/
+test_result/
+
+.DS_Store
+
+*.pyc
+*.log
+wandb/

@@ -1,0 +1,90 @@
+{
+  "data": {
+    "csv_path": "image_data.csv",
+    "base_image_path": "",
+    "base_image_url": "",
+    "target_column": "is_text_tag",
+    "train_ratio": 0.8,
+    "val_ratio": 0.1,
+    "test_ratio": 0.1,
+    "random_state": 42,
+    "filter_categories": null,
+    "min_samples_per_class": 5,
+    "max_samples_per_class": null,
+    "is_remote": true
+  },
+  "model": {
+    "backbone": "efficientnet_b0",
+    "pretrained": true,
+    "dropout_rate": 0.3,
+    "hidden_dim": null,
+    "freeze_backbone_epochs": 5,
+    "unfreeze_backbone_epoch": 10
+  },
+  "training": {
+    "batch_size": 32,
+    "epochs": 20,
+    "learning_rate": 1e-4,
+    "weight_decay": 1e-4,
+    "optimizer": "adamw",
+    "scheduler": "cosine",
+    "scheduler_patience": 7,
+    "warmup_epochs": 3,
+    "patience": 10,
+    "min_delta": 0.001,
+    "early_stopping": true,
+    "use_class_weights": true,
+    "gradient_clip_norm": 1.0,
+    "focal_loss": false,
+    "focal_alpha": 0.25,
+    "focal_gamma": 2.0
+  },
+  "augmentation": {
+    "image_size": 224,
+    "strength": "medium",
+    "horizontal_flip": true,
+    "rotation": 10,
+    "color_jitter": true,
+    "brightness": 0.2,
+    "contrast": 0.2,
+    "saturation": 0.2,
+    "hue": 0.1
+  },
+  "validation": {
+    "val_frequency": 1,
+    "save_best_model": true,
+    "save_last_model": true,
+    "metric": "f1_weighted"
+  },
+  "logging": {
+    "log_frequency": 10,
+    "save_frequency": 5,
+    "print_confusion_matrix": true,
+    "save_predictions": true,
+    "use_wandb": true,
+    "wandb_project": "image-type-classification",
+    "wandb_entity": "vingle"
+  },
+  "inference": {
+    "confidence_threshold": 0.5,
+    "batch_size": 64,
+    "save_features": false,
+    "return_top_k": 3
+  },
+  "paths": {
+    "data_dir": "data",
+    "model_dir": "models",
+    "result_dir": "results",
+    "log_dir": "logs",
+    "checkpoint_dir": "checkpoints",
+    "auto_create_dirs": true
+  },
+  "system": {
+    "device": "auto",
+    "num_workers": 4,
+    "pin_memory": true,
+    "mixed_precision": false,
+    "compile_model": false,
+    "benchmark": true
+  }
+}
