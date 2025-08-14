@@ -25,7 +25,7 @@ from pathlib import Path
 from datetime import datetime
 import torch
 import pandas as pd
-import numpy as np
+
 from typing import Dict, Any, Tuple
 
 try:
@@ -40,11 +40,10 @@ sys.path.append(str(project_root))
 
 from utils.config_manager import ConfigManager
 from utils.device_manager import DeviceManager
-# from utils.resource_manager import ResourceManager  # TODO: ResourceManager 클래스가 없음
+
 from utils.logging_utils import setup_project_logging, log_execution_time, handle_exceptions
 from utils.env_loader import load_env_once
-from database.csv_connector import CSVConnector
-from image_classification.cnn_model import create_image_classifier, get_model_summary, print_model_summary
+from image_classification.cnn_model import create_image_classifier, print_model_summary
 from image_classification.dataset import create_data_loaders, get_dataset_statistics
 from image_classification.trainer import ImageClassifierTrainer
 from image_classification.evaluator import ModelEvaluator
@@ -62,6 +61,10 @@ logger = logging.getLogger(__name__)
 class ImageTypeClassificationPipeline:
     """이미지 타입 분류 파이프라인 메인 클래스"""
     
+    # 상수 정의
+    NUM_CLASSES = 2  # 이진 분류: 0(일반), 1(태그)
+    CLASS_NAMES = ['일반이미지', '태그이미지']
+    
     def __init__(self, config_path: str = "config.json"):
         """
         Args:
@@ -76,10 +79,8 @@ class ImageTypeClassificationPipeline:
         
         # 고유 실행 디렉토리 생성
         base_results_dir = self.config.get('paths', {}).get('result_dir', 'results')
-        # self.run_paths = ResourceManager.create_run_directory(base_results_dir)  # TODO: ResourceManager 없음
-        # self.run_id = os.path.basename(self.run_paths['run_dir'])  # TODO: ResourceManager 없음
         
-        # 고유한 run 폴더 생성 (ResourceManager 대신)
+        # 고유한 run 폴더 생성
         import uuid
         timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
         unique_id = str(uuid.uuid4())[:8]  # 8자리 고유 ID
@@ -92,7 +93,6 @@ class ImageTypeClassificationPipeline:
             'result_dir': run_dir,
             'model_dir': os.path.join(run_dir, 'model'),
             'log_dir': os.path.join(run_dir, 'logs'),
-            'logs_dir': os.path.join(run_dir, 'logs'),
             'checkpoint_dir': os.path.join(run_dir, 'checkpoints')
         }
         
@@ -104,7 +104,6 @@ class ImageTypeClassificationPipeline:
         self._update_config_paths()
         
         # 실행 시점의 설정 저장
-        # ResourceManager.save_run_config(self.config, self.run_paths['run_dir'])  # TODO: ResourceManager 없음
         config_path = os.path.join(self.run_paths['run_dir'], 'config.json')
         with open(config_path, 'w', encoding='utf-8') as f:
             json.dump(self.config, f, indent=2, ensure_ascii=False)
@@ -128,11 +127,6 @@ class ImageTypeClassificationPipeline:
         logger.info(f"디바이스 정보: {device_info['name']} ({device_info['memory_gb']})")
         
         # 실행 메타데이터 생성
-        # ResourceManager.create_run_metadata(  # TODO: ResourceManager 없음
-        #     self.run_paths['run_dir'],
-        #     self.start_time,
-        #     self.config
-        # )
         metadata = {
             'run_id': self.run_id,
             'start_time': self.start_time.isoformat(),
@@ -204,8 +198,6 @@ class ImageTypeClassificationPipeline:
         
         # 데이터 요약 출력 (이진 분류: 태그 vs 일반 이미지)
         total_samples = len(train_df) + len(val_df) + len(test_df)
-        num_classes = 2  # 이진 분류: 0(일반), 1(태그)
-        class_names = ['일반이미지', '태그이미지']
         
         # 태그 분포 확인
         train_tag_dist = train_df['is_text_tag'].value_counts()
@@ -218,7 +210,7 @@ class ImageTypeClassificationPipeline:
         logger.info(f"  Validation: {len(val_df):,}개 ({len(val_df)/total_samples*100:.1f}%)")
         logger.info(f"  Test: {len(test_df):,}개 ({len(test_df)/total_samples*100:.1f}%)")
         logger.info(f"  태스크: 이진 분류 (태그 이미지 vs 일반 이미지)")
-        logger.info(f"  클래스: {', '.join(class_names)}")
+        logger.info(f"  클래스: {', '.join(self.CLASS_NAMES)}")
         
         # 태그 분포 출력
         logger.info(f"태그 분포:")
@@ -356,15 +348,13 @@ class ImageTypeClassificationPipeline:
             )
             
             # 3. 모델 생성 (이진 분류)
-            num_classes = 2  # 이진 분류: 0(일반), 1(태그)
-            class_names = ['일반이미지', '태그이미지']
-            model = self.create_model(num_classes)
+            model = self.create_model(self.NUM_CLASSES)
             
             # 모델 정보를 메타데이터에 추가
             model_info = {
                 'backbone': self.config.get('model', {}).get('backbone', 'unknown'),
-                'num_classes': num_classes,
-                'class_names': class_names,
+                'num_classes': self.NUM_CLASSES,
+                'class_names': self.CLASS_NAMES,
                 'total_params': sum(p.numel() for p in model.parameters()),
                 'trainable_params': sum(p.numel() for p in model.parameters() if p.requires_grad)
             }
@@ -373,7 +363,7 @@ class ImageTypeClassificationPipeline:
             training_results = self.train_model(model, train_loader, val_loader)
             
             # 5. 모델 평가
-            evaluation_results = self.evaluate_model(model, test_loader, class_names)
+            evaluation_results = self.evaluate_model(model, test_loader, self.CLASS_NAMES)
             
             # 최종 결과 요약
             end_time = datetime.now()
@@ -392,8 +382,8 @@ class ImageTypeClassificationPipeline:
                     'train_samples': len(train_df),
                     'val_samples': len(val_df),
                     'test_samples': len(test_df),
-                    'num_classes': num_classes,
-                    'class_names': class_names
+                    'num_classes': self.NUM_CLASSES,
+                    'class_names': self.CLASS_NAMES
                 },
                 'model_info': model_info,
                 'training_results': training_results,
@@ -417,7 +407,7 @@ class ImageTypeClassificationPipeline:
                         'final/total_time_seconds': total_time,
                         'final/best_val_accuracy': training_results['best_val_accuracy'],
                         'final/test_accuracy': evaluation_results['metrics']['accuracy'],
-                        'final/num_classes': num_classes,
+                        'final/num_classes': self.NUM_CLASSES,
                         'final/train_samples': len(train_df),
                         'final/val_samples': len(val_df),
                         'final/test_samples': len(test_df),

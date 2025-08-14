@@ -5,17 +5,20 @@ EfficientNet 기반 이미지 타입 분류 시스템
 ## 환경 설정
 
 ### Conda 환경 생성
+
 ```bash
 conda create -n image_classification python=3.9
 conda activate image_classification
 ```
 
 ### 의존성 설치
+
 ```bash
 pip install -r requirements.txt
 ```
 
 ### 주요 패키지
+
 - PyTorch 2.0+
 - torchvision 0.15+
 - pandas, numpy
@@ -26,28 +29,65 @@ pip install -r requirements.txt
 ## 실행 방법
 
 ### 기본 학습
+
 ```bash
 python main.py
 ```
 
 ### 빠른 테스트 (적은 에포크)
+
 ```bash
 python main.py --quick-test
 ```
 
-### 추론 모드
+### 추론 실행
+
+#### 테스트 실행 (test.py)
+
 ```bash
+# 기본 추론 (전체 데이터셋)
+python test.py --model-path results/run_xxx/model/best_model.pth
+
 # 단일 이미지 예측
-python main.py --mode inference --image-path path/to/image.jpg
+python test.py --model-path results/run_xxx/model/best_model.pth --image-path path/to/image.jpg
 
 # 배치 예측 (CSV 파일)
-python main.py --mode inference --csv-path data.csv --output-path results.csv
-
-# 모델 정보 확인
-python main.py --mode inference
+python test.py --model-path results/run_xxx/model/best_model.pth --csv-path data.csv --output-path results.csv
 ```
 
+**특징:**
+
+- 결과가 `test_result/run_YYYYMMDD_HHMMSS_UUID/` 폴더에 저장됨
+- 메인 결과 CSV에 `true_class` 컬럼 포함
+- 틀린 예측만 모아서 `wrong_train.csv`, `wrong_valid.csv`, `wrong_test.csv` 생성
+- 틀린 결과는 confidence 높은 순으로 정렬됨
+- 개당 추론 시간 계산 및 로깅
+
+#### 백엔드용 API (run.py)
+
+```python
+from run import ImageClassificationAPI
+
+# API 초기화
+api = ImageClassificationAPI(model_path="results/run_xxx/model/best_model.pth")
+
+# 이미지 배열 예측
+image_paths = [
+    "product/unhashed/image1.jpg",
+    "product/unhashed/image2.jpg"
+]
+results = api.predict(image_paths)
+```
+
+**특징:**
+
+- 배열 입력 → 배열 출력 구조
+- 결과를 파일로 저장하지 않음 (로그만 출력)
+- 상세한 로그 (처리 시간, 성공/실패 수, 클래스 분포)
+- 에러 처리 및 실패 시 ERROR 반환
+
 ### 커스텀 설정
+
 ```bash
 python main.py --config custom_config.json
 ```
@@ -56,7 +96,9 @@ python main.py --config custom_config.json
 
 ```
 image_type_classification/
-├── main.py                      # 메인 실행 스크립트
+├── main.py                      # 메인 실행 스크립트 (학습)
+├── test.py                     # 테스트 실행 스크립트 (추론 및 분석)
+├── run.py                      # 백엔드용 추론 API
 ├── config.json                  # 설정 파일
 ├── requirements.txt             # 의존성 패키지
 ├── image_data.csv              # 학습 데이터 (이미지 경로 및 라벨)
@@ -85,11 +127,19 @@ image_type_classification/
 ├── models/                      # 저장된 모델
 │   └── best_model.pth          # 최고 성능 모델
 │
-├── results/                     # 평가 결과
-│   ├── confusion_matrix.png     # 혼동 행렬
-│   ├── classification_report.png # 분류 리포트
-│   ├── evaluation_results.json  # 평가 지표
-│   └── final_results.json      # 최종 결과
+├── results/                     # 학습 결과
+│   └── run_YYYYMMDD_HHMMSS_UUID/ # 실행별 결과 폴더
+│       ├── model/              # 모델 파일
+│       ├── logs/              # 로그 파일
+│       ├── config.json        # 실행 설정
+│       └── run_metadata.json  # 실행 메타데이터
+│
+├── test_result/                # 테스트 결과
+│   └── run_YYYYMMDD_HHMMSS_UUID/ # 테스트 실행별 폴더
+│       ├── inference_results.csv  # 전체 예측 결과
+│       ├── wrong_train.csv       # 훈련 데이터 틀린 예측
+│       ├── wrong_valid.csv       # 검증 데이터 틀린 예측
+│       └── wrong_test.csv        # 테스트 데이터 틀린 예측
 │
 ├── logs/                        # 로그 파일
 │   ├── application.log          # 애플리케이션 로그
@@ -106,17 +156,20 @@ image_type_classification/
 ## 모델 구조
 
 ### 아키텍처
+
 - **백본**: EfficientNet-B0 (사전 훈련된 모델)
 - **분류 헤드**: Linear layers with LayerNorm and Dropout
 - **출력**: 다중 클래스 분류 (소프트맥스)
 
 ### 주요 특징
+
 - 전이 학습: ImageNet 사전 훈련 가중치 사용
 - 점진적 해동: 초기 에포크는 백본 고정, 이후 전체 학습
 - 클래스 불균형 처리: 가중치 기반 손실 함수
 - 데이터 증강: 회전, 색상 변화, 좌우 반전
 
 ### 학습 과정
+
 1. CSV 데이터 로드 및 분할 (train/val/test)
 2. 데이터 로더 생성 (배치 처리, 증강)
 3. 모델 생성 및 초기화
@@ -124,6 +177,7 @@ image_type_classification/
 5. 모델 평가 및 결과 저장
 
 ### 평가 지표
+
 - 정확도 (Accuracy)
 - F1-score (Macro/Weighted)
 - 정밀도 (Precision)
@@ -133,6 +187,7 @@ image_type_classification/
 ## 설정 파일 (config.json)
 
 주요 설정 섹션:
+
 - `data`: 데이터 경로, 분할 비율
 - `model`: 모델 아키텍처 설정
 - `training`: 학습 하이퍼파라미터
