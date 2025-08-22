@@ -149,12 +149,8 @@ class ImageClassifierInference:
             
             # 클래스 정보가 없으면 원본 데이터에서 추출
             if self.num_classes == 0:
-                logger.warning("체크포인트에 클래스 정보가 없습니다. 원본 데이터에서 추출합니다.")
-                self.class_names = self._extract_class_names_from_data()
-                self.num_classes = len(self.class_names)
-                
-                if self.num_classes == 0:
-                    raise ValueError("클래스 정보를 찾을 수 없습니다")
+                self.class_names = [0, 1]
+                self.num_classes = 2
             
             # 모델 생성
             self.model = create_image_classifier(self.config, self.num_classes)
@@ -442,51 +438,3 @@ class ImageClassifierInference:
             'device': str(self.device),
             'config': self.config
         }
-    
-    def _extract_class_names_from_data(self) -> List[str]:
-        """원본 데이터에서 클래스 정보 추출"""
-        try:
-            # config에서 데이터 정보 추출
-            data_config = self.config.get('data', {})
-            target_column = data_config.get('target_column', 'is_text_tag')
-            
-            # 분할된 데이터 파일들을 우선적으로 사용
-            possible_paths = [
-                'data/train_data.csv',
-                'data/validation_data.csv', 
-                'data/test_data.csv',
-                data_config.get('csv_path', 'image_data.csv')  # 마지막으로 원본 파일
-            ]
-            
-            df = None
-            used_path = None
-            
-            # 존재하는 파일을 찾아서 로드
-            for csv_path in possible_paths:
-                if os.path.exists(csv_path):
-                    logger.info(f"클래스 정보 추출 시도: {csv_path}의 {target_column} 컬럼에서")
-                    
-                    import pandas as pd
-                    df = pd.read_csv(csv_path)
-                    
-                    if target_column in df.columns:
-                        used_path = csv_path
-                        logger.info(f"클래스 정보 추출 성공: {csv_path} 사용")
-                        break
-                    else:
-                        logger.warning(f"{csv_path}에 {target_column} 컬럼이 없음")
-                        df = None
-            
-            if df is None:
-                raise FileNotFoundError(f"타겟 컬럼 '{target_column}'이 있는 데이터 파일을 찾을 수 없습니다")
-            
-            # 클래스 이름 추출 (정렬하여 일관성 유지)
-            class_names = sorted(df[target_column].unique().tolist())
-            logger.info(f"추출된 클래스 ({used_path}): {class_names}")
-            
-            return class_names
-            
-        except Exception as e:
-            logger.error(f"클래스 정보 추출 실패: {e}")
-            raise
-

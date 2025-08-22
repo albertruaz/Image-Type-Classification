@@ -57,6 +57,7 @@ def main():
     ]
     
     results = predict_images(model_path, test_image_paths)
+    print(results)
     return results
 
 if __name__ == "__main__":
