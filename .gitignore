@@ -11,3 +11,7 @@ test_result/
 *.pyc
 *.log
 wandb/
+
+*.png
+*.csv
+*.jpg

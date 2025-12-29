@@ -28,10 +28,5 @@ wandb>=0.15.0
 # 환경변수 관리
 python-dotenv>=1.0.0
 
-# 유틸리티
-pathlib
-argparse
-json
-logging
-datetime
+# 유틸리티 (시스템 모니터링)
 psutil>=5.9.0

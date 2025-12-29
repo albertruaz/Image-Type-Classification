@@ -42,7 +42,7 @@ class ImageDataset(Dataset):
                  transform: Optional[transforms.Compose] = None,
                  label_encoder: Optional[LabelEncoder] = None,
                  base_image_path: str = "",
-                 target_column: str = 'is_text_tag',
+                 target_column: str = 'image_type',
                  is_remote: bool = False):
         """
         Args:
@@ -50,7 +50,7 @@ class ImageDataset(Dataset):
             transform: 이미지 전처리 변환
             label_encoder: 레이블 인코더
             base_image_path: 이미지 기본 경로
-            target_column: 타겟 컬럼명 ('is_text_tag')
+            target_column: 타겟 컬럼명 ('image_type')
             is_remote: 원격 이미지 여부 (URL로 접근)
         """
         self.data = data.copy()
@@ -65,20 +65,10 @@ class ImageDataset(Dataset):
         # 레이블 인코더 설정
         if label_encoder is None:
             self.label_encoder = LabelEncoder()
-            # is_text_tag가 이미 정수형인 경우 직접 사용
-            if target_column == 'is_text_tag':
-                self.labels = self.data[target_column].values
-                # 0과 1만 있는지 확인
-                unique_labels = np.unique(self.labels)
-                self.label_encoder.classes_ = np.array(['others', 'tag_images'])
-            else:
-                self.labels = self.label_encoder.fit_transform(self.data[target_column])
+            self.labels = self.label_encoder.fit_transform(self.data[target_column])
         else:
             self.label_encoder = label_encoder
-            if target_column == 'is_text_tag':
-                self.labels = self.data[target_column].values
-            else:
-                self.labels = self.label_encoder.transform(self.data[target_column])
+            self.labels = self.label_encoder.transform(self.data[target_column])
         
         self.num_classes = len(self.label_encoder.classes_)
         
@@ -102,18 +92,11 @@ class ImageDataset(Dataset):
     
     def _print_class_distribution(self):
         """클래스 분포 출력"""
-        if self.target_column == 'is_text_tag':
-            # 이진 분류용 특별 처리
-            class_counts = pd.Series(self.labels).value_counts().sort_index()
-            print("📊 클래스 분포:")
-            print(f"  0 (others): {class_counts.get(0, 0):,}개")
-            print(f"  1 (tag_images): {class_counts.get(1, 0):,}개")
-        else:
-            class_counts = pd.Series(self.labels).value_counts().sort_index()
-            print("📊 클래스 분포:")
-            for class_idx, count in class_counts.items():
-                class_name = self.label_encoder.classes_[class_idx]
-                print(f"  {class_idx}: {class_name} - {count:,}개")
+        class_counts = pd.Series(self.labels).value_counts().sort_index()
+        print("📊 클래스 분포:")
+        for class_idx, count in class_counts.items():
+            class_name = self.label_encoder.classes_[class_idx]
+            print(f"  {class_idx}: {class_name} - {count:,}개")
     
     def __len__(self) -> int:
         return len(self.data)
@@ -268,23 +251,17 @@ def create_data_loaders(train_df: pd.DataFrame,
     num_workers = config.get('system', {}).get('num_workers', 4)
     pin_memory = config.get('system', {}).get('pin_memory', True)
     base_image_path = config.get('data', {}).get('base_image_path', '')
-    target_column = config.get('data', {}).get('target_column', 'is_text_tag')
+    target_column = config.get('data', {}).get('target_column', 'image_type')
     is_remote = config.get('data', {}).get('is_remote', False)
     
     # 변환 생성
     train_transforms = ImageTransforms.get_train_transforms(image_size, augmentation_strength)
     val_transforms = ImageTransforms.get_val_transforms(image_size)
     
-    # 레이블 인코더 생성
-    if target_column == 'is_text_tag':
-        # 이진 분류의 경우 미리 정의된 클래스 사용
-        label_encoder = LabelEncoder()
-        label_encoder.classes_ = np.array(['others', 'tag_images'])
-    else:
-        # 다중 클래스 분류의 경우 전체 데이터의 카테고리 기준
-        all_categories = pd.concat([train_df, val_df, test_df])[target_column].unique()
-        label_encoder = LabelEncoder()
-        label_encoder.fit(all_categories)
+    # 레이블 인코더 생성 (전체 데이터 기준)
+    all_categories = pd.concat([train_df, val_df, test_df])[target_column].unique()
+    label_encoder = LabelEncoder()
+    label_encoder.fit(sorted(all_categories))  # 정렬하여 일관된 순서 보장
     
     # 데이터셋 생성
     train_dataset = ImageDataset(

@@ -31,7 +31,7 @@ class CSVConnector(BaseConnector):
             self.base_image_url = base_image_url
         
         self.df = None
-        self.target_column = 'is_text_tag'
+        self.target_column = 'image_type'
         
         # 데이터 로드
         self._load_data()

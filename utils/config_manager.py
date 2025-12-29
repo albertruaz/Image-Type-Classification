@@ -29,7 +29,7 @@ class ConfigValidator:
             "csv_path": "image_data.csv",
             "base_image_path": "",
             "base_image_url": "",
-            "target_column": "is_text_tag",
+            "target_column": "image_type",
             "train_ratio": 0.8,
             "val_ratio": 0.1,
             "test_ratio": 0.1,

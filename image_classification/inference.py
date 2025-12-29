@@ -147,10 +147,47 @@ class ImageClassifierInference:
             elif not self.base_image_path:
                 logger.warning("로컬 이미지 모드이지만 base_image_path가 설정되지 않았습니다.")
             
-            # 클래스 정보가 없으면 원본 데이터에서 추출
+            # 클래스 정보가 없으면 모델 가중치에서 추론
             if self.num_classes == 0:
-                self.class_names = [0, 1]
-                self.num_classes = 2
+                # 체크포인트에서 마지막 분류 레이어의 bias shape으로 클래스 수 추론
+                state_dict = checkpoint.get('model_state_dict', checkpoint.get('state_dict', checkpoint))
+                
+                # classifier의 마지막 bias에서 클래스 수 확인 (bias shape = [num_classes])
+                classifier_biases = [(k, v) for k, v in state_dict.items() 
+                                    if 'classifier' in k and 'bias' in k]
+                if classifier_biases:
+                    # 가장 마지막 레이어의 bias 사용 (숫자가 가장 큰 것)
+                    classifier_biases.sort(key=lambda x: x[0])
+                    last_bias_key, last_bias = classifier_biases[-1]
+                    self.num_classes = last_bias.shape[0]
+                    logger.info(f"마지막 레이어 '{last_bias_key}'에서 클래스 수 추론: {self.num_classes}")
+                
+                if self.num_classes == 0:
+                    self.num_classes = 2  # 기본값
+                
+                # 1순위: 체크포인트 config에서 class_names 가져오기
+                config_class_names = self.config.get('data', {}).get('class_names', [])
+                
+                # 2순위: 외부 config.json 파일에서 가져오기
+                if not config_class_names or len(config_class_names) != self.num_classes:
+                    try:
+                        config_path = Path(self.model_path).parent.parent.parent / 'config.json'
+                        if not config_path.exists():
+                            config_path = Path('config.json')
+                        if config_path.exists():
+                            with open(config_path, 'r', encoding='utf-8') as f:
+                                external_config = json.load(f)
+                                config_class_names = external_config.get('data', {}).get('class_names', [])
+                    except Exception as e:
+                        logger.debug(f"외부 config.json 로드 실패: {e}")
+                
+                if config_class_names and len(config_class_names) == self.num_classes:
+                    self.class_names = config_class_names
+                    logger.info(f"클래스 이름 로드: {self.class_names}")
+                else:
+                    # 최후의 수단: 기본 이름 생성 (이 경우는 피해야 함)
+                    self.class_names = [f'class_{i}' for i in range(self.num_classes)]
+                    logger.warning(f"클래스 이름을 찾을 수 없어 기본값 사용: {self.class_names}")
             
             # 모델 생성
             self.model = create_image_classifier(self.config, self.num_classes)

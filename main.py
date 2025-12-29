@@ -60,11 +60,7 @@ logger = logging.getLogger(__name__)
 
 class ImageTypeClassificationPipeline:
     """이미지 타입 분류 파이프라인 메인 클래스"""
-    
-    # 상수 정의
-    NUM_CLASSES = 2  # 이진 분류: 0(일반), 1(태그)
-    CLASS_NAMES = ['일반이미지', '태그이미지']
-    
+
     def __init__(self, config_path: str = "config.json"):
         """
         Args:
@@ -76,6 +72,11 @@ class ImageTypeClassificationPipeline:
         # 설정 관리자를 통한 설정 로드 및 검증
         self.config_manager = ConfigManager(config_path)
         self.config = self.config_manager.get_config()
+        
+        # 클래스 정보 설정 (config에서 로드)
+        self.CLASS_NAMES = self.config.get('data', {}).get('class_names', 
+            ['care_label', 'detail_shot', 'full_shot', 'neck_label'])
+        self.NUM_CLASSES = len(self.CLASS_NAMES)
         
         # 고유 실행 디렉토리 생성
         base_results_dir = self.config.get('paths', {}).get('result_dir', 'results')
@@ -196,27 +197,25 @@ class ImageTypeClassificationPipeline:
         test_df = pd.read_csv(test_path, encoding='utf-8')
         # Test도 재현성을 위해 셔플링하지 않음
         
-        # 데이터 요약 출력 (이진 분류: 태그 vs 일반 이미지)
+        # 데이터 요약 출력 (4클래스 분류)
         total_samples = len(train_df) + len(val_df) + len(test_df)
         
-        # 태그 분포 확인
-        train_tag_dist = train_df['is_text_tag'].value_counts()
-        val_tag_dist = val_df['is_text_tag'].value_counts()
-        test_tag_dist = test_df['is_text_tag'].value_counts()
+        # 이미지 타입 분포 확인
+        train_type_dist = train_df['image_type'].value_counts()
+        val_type_dist = val_df['image_type'].value_counts()
+        test_type_dist = test_df['image_type'].value_counts()
         
-        logger.info(f"데이터 요약 (이미지 태그 분류):")
+        logger.info(f"데이터 요약 (4클래스 이미지 타입 분류):")
         logger.info(f"  전체: {total_samples:,}개 이미지")
         logger.info(f"  Train: {len(train_df):,}개 ({len(train_df)/total_samples*100:.1f}%)")
         logger.info(f"  Validation: {len(val_df):,}개 ({len(val_df)/total_samples*100:.1f}%)")
         logger.info(f"  Test: {len(test_df):,}개 ({len(test_df)/total_samples*100:.1f}%)")
-        logger.info(f"  태스크: 이진 분류 (태그 이미지 vs 일반 이미지)")
         logger.info(f"  클래스: {', '.join(self.CLASS_NAMES)}")
         
-        # 태그 분포 출력
-        logger.info(f"태그 분포:")
-        logger.info(f"  Train - 일반: {train_tag_dist.get(0, 0):,}, 태그: {train_tag_dist.get(1, 0):,}")
-        logger.info(f"  Val - 일반: {val_tag_dist.get(0, 0):,}, 태그: {val_tag_dist.get(1, 0):,}")
-        logger.info(f"  Test - 일반: {test_tag_dist.get(0, 0):,}, 태그: {test_tag_dist.get(1, 0):,}")
+        # 이미지 타입 분포 출력
+        logger.info(f"이미지 타입 분포:")
+        for img_type in sorted(train_type_dist.index):
+            logger.info(f"  {img_type}: Train {train_type_dist.get(img_type, 0):,}, Val {val_type_dist.get(img_type, 0):,}, Test {test_type_dist.get(img_type, 0):,}")
         
         # 제품 정보
         train_products = train_df['product_id'].nunique()

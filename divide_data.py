@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # divide_data.py
 """
-이미지 태그 분류 데이터 분할 스크립트
+이미지 타입 분류 데이터 분할 스크립트
 
 image_data.csv 파일을 이미지별 행으로 변환하고
-tag 이미지(text_tag_image, neck_tag_image) vs 일반 이미지로 분류하여
+4개 클래스(full_shot, detail_shot, neck_label, care_label)로 분류하여
 train/validation/test로 분할하여 data/ 폴더에 저장
 
 사용법:
@@ -42,20 +42,21 @@ def expand_images_to_rows(df: pd.DataFrame) -> pd.DataFrame:
     # 결과를 저장할 리스트
     expanded_rows = []
     
-    # 이미지 타입별 컬럼 정의
+    # 원본 CSV 컬럼 → image_type 매핑
+    # 4개 클래스: full_shot, detail_shot, neck_label, care_label
     image_type_columns = {
-        'main_image': {'is_text_tag': 0, 'image_type': 'main_image'},
-        'back_image': {'is_text_tag': 0, 'image_type': 'back_image'},
-        'text_tag_image': {'is_text_tag': 1, 'image_type': 'text_tag_image'},
-        'neck_tag_image': {'is_text_tag': 1, 'image_type': 'neck_tag_image'},
-        'other': {'is_text_tag': 0, 'image_type': 'other'}
+        'main_image': 'full_shot',
+        'back_image': 'full_shot',
+        'text_tag_image': 'care_label',
+        'neck_tag_image': 'neck_label',
+        'other': 'detail_shot'
     }
     
     for idx, row in df.iterrows():
         product_id = row['id']
         
         # 각 이미지 타입별로 처리
-        for column_name, label_info in image_type_columns.items():
+        for column_name, image_type in image_type_columns.items():
             if column_name not in df.columns:
                 continue
                 
@@ -79,12 +80,10 @@ def expand_images_to_rows(df: pd.DataFrame) -> pd.DataFrame:
                 if image_path == '' or image_path == 'nan':
                     continue
                 
-                # 새로운 행 생성 (이진 분류에 필요한 컬럼만)
                 new_row = {
                     'product_id': product_id,
                     'image_path': image_path,
-                    'image_type': label_info['image_type'],
-                    'is_text_tag': label_info['is_text_tag'],
+                    'image_type': image_type,
                     # 분할 시에만 사용할 임시 컬럼 (최종 저장 시 제거)
                     '_temp_category_name': row['category_name']
                 }
@@ -97,12 +96,6 @@ def expand_images_to_rows(df: pd.DataFrame) -> pd.DataFrame:
     logger.info(f"확장 완료:")
     logger.info(f"  원본: {len(df)}개 제품")
     logger.info(f"  확장후: {len(expanded_df)}개 이미지")
-    
-    # 태그별 분포 확인
-    tag_distribution = expanded_df['is_text_tag'].value_counts()
-    logger.info(f"태그 분포:")
-    logger.info(f"  일반 이미지 (0): {tag_distribution.get(0, 0):,}개")
-    logger.info(f"  태그 이미지 (1): {tag_distribution.get(1, 0):,}개")
     
     # 이미지 타입별 분포
     type_distribution = expanded_df['image_type'].value_counts()
@@ -119,7 +112,6 @@ def analyze_expanded_data(df: pd.DataFrame) -> dict:
         'total_products': df['product_id'].nunique(),
         'columns': list(df.columns),
         'missing_values': df.isnull().sum().to_dict(),
-        'tag_distribution': df['is_text_tag'].value_counts().to_dict(),
         'image_type_distribution': df['image_type'].value_counts().to_dict(),
         'category_distribution': df['_temp_category_name'].value_counts().to_dict(),
         'categories': df['_temp_category_name'].unique().tolist(),
@@ -153,20 +145,13 @@ def stratified_split_by_product(df: pd.DataFrame,
     
     logger.info("🔄 제품 기준 계층화 분할 중...")
     
-    # 제품별 집계 (카테고리와 태그 분포 계산)
+    # 제품별 집계 (카테고리 기준)
     product_summary = df.groupby('product_id').agg({
-        '_temp_category_name': 'first',  # 제품의 카테고리 (임시)
-        'is_text_tag': ['sum', 'count']  # 태그 이미지 수, 전체 이미지 수
+        '_temp_category_name': 'first'  # 제품의 카테고리
     }).reset_index()
-    
-    # 컬럼명 정리
-    product_summary.columns = ['product_id', '_temp_category_name', 'tag_count', 'total_count']
-    product_summary['has_tag'] = (product_summary['tag_count'] > 0).astype(int)
     
     logger.info(f"제품 분포:")
     logger.info(f"  전체 제품: {len(product_summary):,}개")
-    logger.info(f"  태그 이미지 있는 제품: {product_summary['has_tag'].sum():,}개")
-    logger.info(f"  태그 이미지 없는 제품: {(product_summary['has_tag'] == 0).sum():,}개")
     
     # 카테고리별 분포
     category_dist = product_summary['_temp_category_name'].value_counts()
@@ -236,13 +221,11 @@ def verify_split_integrity(train_df: pd.DataFrame, val_df: pd.DataFrame, test_df
     else:
         logger.info("✅ 제품 ID 중복 없음 - 데이터 누수 방지 완료")
     
-    # 태그 분포 확인
-    logger.info("태그 분포 비교:")
+    # 이미지 타입 분포 확인
+    logger.info("이미지 타입 분포 비교:")
     for name, df_split in [('Train', train_df), ('Validation', val_df), ('Test', test_df)]:
-        tag_dist = df_split['is_text_tag'].value_counts()
-        total = len(df_split)
-        tag_ratio = tag_dist.get(1, 0) / total * 100 if total > 0 else 0
-        logger.info(f"  {name}: 태그 {tag_dist.get(1, 0):,}개 / 전체 {total:,}개 ({tag_ratio:.1f}%)")
+        type_dist = df_split['image_type'].value_counts()
+        logger.info(f"  {name}: {dict(type_dist)}")
     
     # 카테고리 분포 확인
     logger.info("카테고리 분포 비교:")
@@ -286,7 +269,7 @@ def save_splits(train_df: pd.DataFrame,
     }
     
     # 최종 저장할 컬럼 선택 (임시 컬럼 제거)
-    final_columns = ['product_id', 'image_path', 'image_type', 'is_text_tag']
+    final_columns = ['product_id', 'image_path', 'image_type']
     
     # 데이터프레임 저장 (필요한 컬럼만)
     train_df[final_columns].to_csv(file_paths['train'], index=False, encoding='utf-8')
@@ -335,11 +318,6 @@ def create_summary(train_df: pd.DataFrame,
         'categories': {
             'total_categories': len(set(train_df['_temp_category_name']) | set(val_df['_temp_category_name']) | set(test_df['_temp_category_name'])),
             'category_list': sorted(list(set(train_df['_temp_category_name']) | set(val_df['_temp_category_name']) | set(test_df['_temp_category_name'])))
-        },
-        'tag_distribution': {
-            'train': train_df['is_text_tag'].value_counts().to_dict(),
-            'validation': val_df['is_text_tag'].value_counts().to_dict(),
-            'test': test_df['is_text_tag'].value_counts().to_dict()
         },
         'image_type_distribution': {
             'train': train_df['image_type'].value_counts().to_dict(),
@@ -407,7 +385,7 @@ def validate_image_paths(df: pd.DataFrame, base_path: str = "") -> dict:
 
 def main():
     """메인 함수"""
-    parser = argparse.ArgumentParser(description='이미지 태그 분류 데이터 분할 스크립트')
+    parser = argparse.ArgumentParser(description='이미지 타입 분류 데이터 분할 스크립트')
     parser.add_argument('--input-file', type=str, default='data/original_data/image_data.csv',
                        help='입력 CSV 파일 경로 (기본값: image_data.csv)')
     parser.add_argument('--output-dir', type=str, default='data',
@@ -439,7 +417,7 @@ def main():
     
     try:
         logger.info("=" * 60)
-        logger.info("🏷️ 이미지 태그 분류 데이터 분할 시작")
+        logger.info("📸 이미지 타입 분류 데이터 분할 시작")
         logger.info("=" * 60)
         logger.info(f"입력 파일: {args.input_file}")
         logger.info(f"출력 디렉토리: {args.output_dir}")
@@ -477,11 +455,10 @@ def main():
         logger.info(f"총 제품: {analysis['total_products']:,}개")
         logger.info(f"카테고리 수: {analysis['num_categories']}개")
         
-        logger.info("태그 분포:")
-        for tag_value, count in analysis['tag_distribution'].items():
-            tag_name = "태그 이미지" if tag_value == 1 else "일반 이미지"
+        logger.info("이미지 타입 분포:")
+        for img_type, count in analysis['image_type_distribution'].items():
             pct = count / analysis['total_images'] * 100
-            logger.info(f"  {tag_name} ({tag_value}): {count:,}개 ({pct:.1f}%)")
+            logger.info(f"  {img_type}: {count:,}개 ({pct:.1f}%)")
         
         # 4. 누락값 체크 및 정리
         missing_image_path = analysis['missing_values'].get('image_path', 0)
@@ -521,7 +498,7 @@ def main():
         summary_path = create_summary(train_df, val_df, test_df, file_paths, config, args.output_dir)
         
         logger.info("=" * 60)
-        logger.info("✅ 이미지 태그 분류 데이터 분할 완료")
+        logger.info("✅ 이미지 타입 분류 데이터 분할 완료")
         logger.info("=" * 60)
         logger.info("📁 생성된 파일:")
         for split_name, file_path in file_paths.items():
@@ -530,19 +507,20 @@ def main():
         logger.info(f"  {summary_path}")
         
         # 최종 요약
-        print(f"\n🎉 이미지 태그 분류 데이터 분할이 완료되었습니다!")
+        print(f"\n🎉 이미지 타입 분류 데이터 분할이 완료되었습니다!")
         print(f"📂 출력 폴더: {args.output_dir}")
         print(f"📊 분할 결과:")
         print(f"  Train: {len(train_df):,}개 이미지 ({len(set(train_df['product_id'])):,}개 제품)")
         print(f"  Val: {len(val_df):,}개 이미지 ({len(set(val_df['product_id'])):,}개 제품)")
         print(f"  Test: {len(test_df):,}개 이미지 ({len(set(test_df['product_id'])):,}개 제품)")
         
-        # 태그 분포 요약
-        train_tag_ratio = train_df['is_text_tag'].mean() * 100
-        val_tag_ratio = val_df['is_text_tag'].mean() * 100
-        test_tag_ratio = test_df['is_text_tag'].mean() * 100
-        print(f"🏷️ 태그 이미지 비율:")
-        print(f"  Train: {train_tag_ratio:.1f}%, Val: {val_tag_ratio:.1f}%, Test: {test_tag_ratio:.1f}%")
+        # 이미지 타입 분포 요약
+        print(f"📸 이미지 타입 분포:")
+        for img_type in sorted(train_df['image_type'].unique()):
+            train_count = len(train_df[train_df['image_type'] == img_type])
+            val_count = len(val_df[val_df['image_type'] == img_type])
+            test_count = len(test_df[test_df['image_type'] == img_type])
+            print(f"  {img_type}: Train {train_count:,}, Val {val_count:,}, Test {test_count:,}")
         
     except Exception as e:
         logger.error(f"데이터 분할 중 오류 발생: {e}")

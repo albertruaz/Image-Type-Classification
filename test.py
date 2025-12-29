@@ -160,10 +160,10 @@ class ImageTypeClassificationTest:
             logger.info(f"배치 추론 시간: 총 {total_time:.2f}초, 개당 평균 {avg_time_per_image:.3f}초")
             
             # true_class 컬럼이 있는지 확인
-            has_true_class = 'is_text_tag' in df.columns
+            has_true_class = 'image_type' in df.columns
             
             for i, pred in enumerate(predictions):
-                true_class = df.iloc[i]['is_text_tag'] if has_true_class and i < len(df) else 'N/A'
+                true_class = df.iloc[i]['image_type'] if has_true_class and i < len(df) else 'N/A'
                 
                 if 'error' not in pred:
                     all_results.append({
@@ -214,13 +214,13 @@ class ImageTypeClassificationTest:
                     logger.info(f"{split_name.upper()} 추론 시간: 총 {total_time:.2f}초, 개당 평균 {avg_time_per_image:.3f}초")
                     
                     # 정확도 계산
-                    if 'is_text_tag' in split_df.columns:
+                    if 'image_type' in split_df.columns:
                         correct = 0
                         total = 0
                         for i, pred in enumerate(predictions):
                             if 'error' not in pred and i < len(split_df):
-                                actual = split_df.iloc[i]['is_text_tag']
-                                predicted = pred['predicted_class_idx']
+                                actual = split_df.iloc[i]['image_type']
+                                predicted = pred['predicted_class']
                                 if actual == predicted:
                                     correct += 1
                                 total += 1
@@ -231,7 +231,7 @@ class ImageTypeClassificationTest:
                     
                     # 결과 추가
                     for i, pred in enumerate(predictions):
-                        true_class = split_df.iloc[i]['is_text_tag'] if i < len(split_df) else 'N/A'
+                        true_class = split_df.iloc[i]['image_type'] if i < len(split_df) else 'N/A'
                         
                         if 'error' not in pred:
                             all_results.append({
@@ -329,8 +329,7 @@ def main():
     parser = argparse.ArgumentParser(description='이미지 타입 분류 테스트 - 단순 CSV 결과 생성')
     parser.add_argument('--config', type=str, default='config.json',
                        help='설정 파일 경로 (기본값: config.json)')
-    parser.add_argument('--model-path', type=str, required=True,
-                       help='사용할 모델 파일 경로 (필수)')
+    parser.add_argument('--model-path', type=str, required=True,help='사용할 모델 파일 경로 (필수)')
     parser.add_argument('--image-path', type=str,
                        help='추론할 이미지 경로 (단일 이미지용)')
     parser.add_argument('--csv-path', type=str,

@@ -46,7 +46,7 @@ def predict_images(model_path: str, image_paths: List[str]) -> List[Dict[str, An
     return results
 
 def main():
-    model_path = "results/run_20250812_163937_0f5fe933/model/best_model.pth"
+    model_path = "results/run_20251228_193123_39cb9957/model/best_model.pth"
     
     test_image_paths = [
         "product/unhashed/4250e3b9-113d-4bf8-aa98-cc9e8b3f080a-978451651",

@@ -465,7 +465,7 @@ class ImageClassifierTrainer:
         
         return training_summary
     
-    def save_checkpoint(self, epoch: int, is_best: bool = False):
+    def save_checkpoint(self, epoch: int, is_best: bool = False, class_names: List[str] = None):
         """체크포인트 저장"""
         checkpoint = {
             'epoch': epoch,
@@ -475,6 +475,7 @@ class ImageClassifierTrainer:
             'best_val_loss': self.best_val_loss,
             'best_val_acc': self.best_val_acc,
             'config': self.config,
+            'class_names': class_names or [],
             'train_losses': self.train_losses,
             'val_losses': self.val_losses,
             'train_accuracies': self.train_accuracies,
