@@ -74,17 +74,19 @@ def create_error_grid(samples: pd.DataFrame,
     
     for idx in range(grid_size):
         ax = axes[idx]
-        
+
         if idx < n_samples:
             row = samples.iloc[idx]
             true_label = row['true_label']
             pred_label = row['predicted_label']
             confidence = row['confidence']
             image_path = row['image_path']
-            
+            # id 또는 product_id 추출
+            product_id = row['product_id'] if 'product_id' in row else (row['id'] if 'id' in row else None)
+
             # 이미지 로드
             image = load_image_from_path(image_path, cloudfront_domain)
-            
+
             if image is not None:
                 ax.imshow(image)
             else:
@@ -93,18 +95,21 @@ def create_error_grid(samples: pd.DataFrame,
                 ax.text(0.5, 0.5, 'Image\nLoad\nFailed', 
                        transform=ax.transAxes, ha='center', va='center',
                        fontsize=12, color='white')
-            
+
             # 정보 텍스트 (이미지 아래)
-            info_text = f"True: {true_label}\nPred: {pred_label}\nConf: {confidence:.4f}"
+            if product_id is not None:
+                info_text = f"ID: {product_id}\nTrue: {true_label}\nPred: {pred_label}\nConf: {confidence:.4f}"
+            else:
+                info_text = f"True: {true_label}\nPred: {pred_label}\nConf: {confidence:.4f}"
             ax.set_xlabel(info_text, fontsize=10, fontweight='bold')
         else:
             # 빈 셀
             ax.axis('off')
             continue
-        
+
         ax.set_xticks([])
         ax.set_yticks([])
-        
+
         # 예측이 틀린 경우 빨간색 테두리
         for spine in ax.spines.values():
             spine.set_edgecolor('red')
@@ -195,7 +200,7 @@ def main():
                         help='error_analysis.csv 파일 경로')
     parser.add_argument('--output', type=str, default='error_visualizations',
                         help='출력 디렉토리')
-    parser.add_argument('--k', type=int, default=12,
+    parser.add_argument('--k', type=int, default=40,
                         help='각 true_label별 샘플 수')
     parser.add_argument('--per-image', type=int, default=4,
                         help='한 이미지당 샘플 수')

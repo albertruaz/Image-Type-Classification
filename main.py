@@ -72,6 +72,8 @@ class ImageTypeClassificationPipeline:
         # 설정 관리자를 통한 설정 로드 및 검증
         self.config_manager = ConfigManager(config_path)
         self.config = self.config_manager.get_config()
+        self.config.setdefault('logging', {})
+        self.config['logging']['wandb_prefix'] = 'main_'
         
         # 클래스 정보 설정 (config에서 로드)
         self.CLASS_NAMES = self.config.get('data', {}).get('class_names', 
@@ -309,7 +311,8 @@ class ImageTypeClassificationPipeline:
             test_loader=test_loader,
             class_names=class_names,
             device=self.device,
-            save_dir=self.run_paths['result_dir']
+            save_dir=self.run_paths['result_dir'],
+            class_thresholds=self.config.get('inference', {}).get('class_thresholds')
         )
         
         # 평가 실행
@@ -402,7 +405,8 @@ class ImageTypeClassificationPipeline:
             # wandb 최종 결과 로깅
             if wandb_run:
                 try:
-                    wandb.log({
+                    prefix = self.config.get('logging', {}).get('wandb_prefix', '')
+                    metrics = {
                         'final/total_time_seconds': total_time,
                         'final/best_val_accuracy': training_results['best_val_accuracy'],
                         'final/test_accuracy': evaluation_results['metrics']['accuracy'],
@@ -413,11 +417,15 @@ class ImageTypeClassificationPipeline:
                         'final/label_smoothing_used': final_results['enhancements_used']['label_smoothing'],
                         'final/ema_used': final_results['enhancements_used']['ema'],
                         'final/run_id': self.run_id
-                    })
+                    }
+                    if prefix:
+                        metrics = {f"{prefix}{key}": value for key, value in metrics.items()}
+                    wandb.log(metrics)
                     # 학습 곡선 이미지가 있다면 wandb에 업로드
                     curve_path = os.path.join(self.run_paths['log_dir'], 'training_curves.png')
                     if os.path.exists(curve_path):
-                        wandb.log({"training_curves": wandb.Image(curve_path)})
+                        curve_key = f"{prefix}training_curves" if prefix else "training_curves"
+                        wandb.log({curve_key: wandb.Image(curve_path)})
                 except Exception as e:
                     logger.warning(f"wandb 최종 로깅 실패: {e}")
             

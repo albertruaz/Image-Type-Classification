@@ -42,7 +42,7 @@ class ConfigValidator:
         "model": {
             "backbone": "efficientnet_b0",
             "pretrained": True,
-            "dropout_rate": 0.3,
+            "dropout_rate": 0.2,
             "hidden_dim": None,
             "freeze_backbone_epochs": 5,
             "unfreeze_backbone_epoch": 10
@@ -55,15 +55,15 @@ class ConfigValidator:
             "optimizer": "adamw",
             "scheduler": "cosine",
             "scheduler_patience": 7,
-            "warmup_epochs": 3,
+            "warmup_epochs": 1,
             "patience": 10,
             "min_delta": 0.001,
             "early_stopping": True,
-            "use_class_weights": True,
+            "use_class_weights": False,
             "gradient_clip_norm": 1.0,
-            "focal_loss": False,
+            "focal_loss": True,
             "focal_alpha": 0.25,
-            "focal_gamma": 2.0
+            "focal_gamma": 1.0
         },
         "augmentation": {
             "image_size": 224,

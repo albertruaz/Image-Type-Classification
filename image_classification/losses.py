@@ -11,6 +11,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Optional
 
+
+def _to_tensor_if_sequence(value):
+    if isinstance(value, (list, tuple)):
+        return torch.tensor(value, dtype=torch.float32)
+    return value
+
 class FocalLoss(nn.Module):
     """
     Focal Loss 구현
@@ -27,8 +33,8 @@ class FocalLoss(nn.Module):
             reduction: 'mean', 'sum', 'none'
         """
         super(FocalLoss, self).__init__()
-        self.alpha = alpha
-        self.gamma = gamma
+        self.alpha = _to_tensor_if_sequence(alpha)
+        self.gamma = _to_tensor_if_sequence(gamma)
         self.reduction = reduction
     
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -51,10 +57,21 @@ class FocalLoss(nn.Module):
             if isinstance(self.alpha, (float, int)):
                 alpha_t = self.alpha
             else:
-                alpha_t = self.alpha[targets]
-            focal_loss = alpha_t * (1 - p_t) ** self.gamma * ce_loss
+                alpha_tensor = self.alpha.to(targets.device) if isinstance(self.alpha, torch.Tensor) else self.alpha
+                alpha_t = alpha_tensor[targets]
         else:
-            focal_loss = (1 - p_t) ** self.gamma * ce_loss
+            alpha_t = None
+
+        if isinstance(self.gamma, (float, int)):
+            gamma_t = self.gamma
+        else:
+            gamma_tensor = self.gamma.to(targets.device) if isinstance(self.gamma, torch.Tensor) else self.gamma
+            gamma_t = gamma_tensor[targets]
+
+        if alpha_t is not None:
+            focal_loss = alpha_t * (1 - p_t) ** gamma_t * ce_loss
+        else:
+            focal_loss = (1 - p_t) ** gamma_t * ce_loss
         
         # Reduction 적용
         if self.reduction == 'mean':
@@ -86,8 +103,8 @@ class WeightedFocalLoss(nn.Module):
         """
         super(WeightedFocalLoss, self).__init__()
         self.class_weights = class_weights
-        self.alpha = alpha
-        self.gamma = gamma
+        self.alpha = _to_tensor_if_sequence(alpha)
+        self.gamma = _to_tensor_if_sequence(gamma)
         self.reduction = reduction
     
     def forward(self, inputs: torch.Tensor, targets: torch.Tensor) -> torch.Tensor:
@@ -110,10 +127,21 @@ class WeightedFocalLoss(nn.Module):
             if isinstance(self.alpha, (float, int)):
                 alpha_t = self.alpha
             else:
-                alpha_t = self.alpha[targets]
-            focal_loss = alpha_t * (1 - p_t) ** self.gamma * ce_loss
+                alpha_tensor = self.alpha.to(targets.device) if isinstance(self.alpha, torch.Tensor) else self.alpha
+                alpha_t = alpha_tensor[targets]
         else:
-            focal_loss = (1 - p_t) ** self.gamma * ce_loss
+            alpha_t = None
+
+        if isinstance(self.gamma, (float, int)):
+            gamma_t = self.gamma
+        else:
+            gamma_tensor = self.gamma.to(targets.device) if isinstance(self.gamma, torch.Tensor) else self.gamma
+            gamma_t = gamma_tensor[targets]
+
+        if alpha_t is not None:
+            focal_loss = alpha_t * (1 - p_t) ** gamma_t * ce_loss
+        else:
+            focal_loss = (1 - p_t) ** gamma_t * ce_loss
         
         # Reduction 적용
         if self.reduction == 'mean':

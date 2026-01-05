@@ -1,362 +1,232 @@
 #!/usr/bin/env python3
-# test.py
 """
-이미지 타입 분류 테스트 실행 스크립트
+오답 분석 스크립트
 
-기존 main.py의 inference 기능과 동일하지만 test_result 폴더를 사용합니다.
-
-사용법:
-    python test.py --model-path <모델경로>                    # 기본 추론
-    python test.py --model-path <모델경로> --image-path <이미지경로>  # 단일 이미지
-    python test.py --model-path <모델경로> --csv-path <CSV경로>      # 배치 추론
+Test 데이터에서 오답을 찾아서 각 클래스별로 
+잘못 예측한 confidence가 높은 순으로 정렬하여 출력
 """
 
-import argparse
-import json
-import os
 import sys
-import logging
+import argparse
 from pathlib import Path
-from datetime import datetime
-import time
-import torch
 import pandas as pd
-import numpy as np
-from typing import Dict, Any, Tuple
-import uuid
 
-try:
-    import wandb
-    WANDB_AVAILABLE = True
-except ImportError:
-    WANDB_AVAILABLE = False
-
-# 프로젝트 루트 추가
 project_root = Path(__file__).parent
 sys.path.append(str(project_root))
 
-from utils.config_manager import ConfigManager
 from utils.device_manager import DeviceManager
-from utils.logging_utils import setup_project_logging, log_execution_time, handle_exceptions
 from utils.env_loader import load_env_once
-from database.csv_connector import CSVConnector
-from image_classification.cnn_model import create_image_classifier, get_model_summary, print_model_summary
-from image_classification.dataset import create_data_loaders, get_dataset_statistics
-from image_classification.trainer import ImageClassifierTrainer
-from image_classification.evaluator import ModelEvaluator
+from image_classification.inference import ImageClassifierInference
 
-# 환경변수 로드 (한 번만)
+# 환경변수 로드
 load_env_once()
 
-# 로깅 설정
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
-class ImageTypeClassificationTest:
-    """이미지 타입 분류 테스트 클래스 (단순 CSV 결과 생성)"""
+def analyze_errors(model_path: str, test_data_path: str, top_k: int = 10, output_path: str = None):
+    """
+    오답 분석 실행
     
-    def __init__(self, config_path: str = "config.json"):
-        """
-        Args:
-            config_path: 설정 파일 경로
-        """
-        self.config_path = config_path
-        self.start_time = datetime.now()
-        
-        # 설정 관리자를 통한 설정 로드 및 검증
-        self.config_manager = ConfigManager(config_path)
-        self.config = self.config_manager.get_config()
-        
-        # 디바이스 관리자를 통한 디바이스 설정
-        self.device = DeviceManager.get_device()
-        
-        # test_result 폴더에 run 디렉토리 생성
-        base_results_dir = "test_result"
-        timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
-        unique_id = str(uuid.uuid4())[:8]
-        self.run_id = f"run_{timestamp}_{unique_id}"
-        
-        self.run_dir = os.path.join(base_results_dir, self.run_id)
-        os.makedirs(self.run_dir, exist_ok=True)
-        
-        # 디바이스 정보 출력
-        device_info = DeviceManager.get_device_info()
-        logger.info(f"디바이스 정보: {device_info['name']} ({device_info['memory_gb']})")
-        logger.info(f"결과 저장 폴더: {self.run_dir}")
+    Args:
+        model_path: 모델 경로
+        test_data_path: 테스트 데이터 CSV 경로
+        top_k: 각 클래스별 상위 k개 출력
+        output_path: 결과 저장 경로 (선택)
+    """
+    # 테스트 데이터 로드
+    print(f"📂 테스트 데이터 로드: {test_data_path}")
+    test_df = pd.read_csv(test_data_path)
+    print(f"   총 {len(test_df)}개 샘플")
+    
+    # 추론 엔진 초기화
+    print(f"\n🔧 모델 로드: {model_path}")
+    device = DeviceManager.get_device()
+    inference_engine = ImageClassifierInference(model_path=model_path, device=device)
+    
+    class_names = inference_engine.class_names
+    print(f"   클래스: {class_names}")
+    
+    # 이미지 경로 컬럼 확인
+    image_col = 'image_path' if 'image_path' in test_df.columns else 'path'
+    label_col = 'image_type' if 'image_type' in test_df.columns else 'label'
+    
+    image_paths = test_df[image_col].tolist()
+    true_labels = test_df[label_col].tolist()
+    
+    # 배치 예측
+    print(f"\n🔮 예측 실행 중...")
+    predictions = inference_engine.predict_batch(
+        image_paths=image_paths,
+        batch_size=64,
+        return_probabilities=True
+    )
+    
+    # 결과 DataFrame 생성
+    # product_id 컬럼이 있으면 포함
+    has_product_id = 'product_id' in test_df.columns
+    results = []
+    for i, pred in enumerate(predictions):
+        true_label = true_labels[i]
+        pred_label = pred.get('predicted_class', 'ERROR')
+        confidence = pred.get('confidence', 0.0)
+        probs = pred.get('probabilities', {})
 
-    def run_inference(self, image_path: str = None, 
-                      csv_path: str = None,
-                      output_path: str = None,
-                      model_path: str = None) -> str:
-        """추론 실행 - 단순 CSV 결과 생성"""
+        is_correct = (str(true_label) == str(pred_label))
+
+        row = {
+            'image_path': image_paths[i],
+            'true_label': true_label,
+            'predicted_label': pred_label,
+            'confidence': confidence,
+            'is_correct': is_correct,
+            **{f'prob_{c}': probs.get(c, 0.0) for c in class_names}
+        }
+        if has_product_id:
+            row['product_id'] = test_df.iloc[i]['product_id']
+        results.append(row)
+
+    results_df = pd.DataFrame(results)
+    
+    # 전체 정확도
+    accuracy = results_df['is_correct'].mean() * 100
+    total_errors = (~results_df['is_correct']).sum()
+    print(f"\n📊 전체 정확도: {accuracy:.2f}% (오답: {total_errors}개)")
+    
+    # 오답만 필터링
+    errors_df = results_df[~results_df['is_correct']].copy()
+    
+    if len(errors_df) == 0:
+        print("\n✅ 오답이 없습니다!")
+        return results_df
+    
+    # 각 클래스별 오답 분석
+    print("\n" + "=" * 80)
+    print("🔍 클래스별 오답 분석 (잘못 예측한 confidence가 높은 순)")
+    print("=" * 80)
+    
+    all_class_errors = {}
+    
+    for true_class in class_names:
+        # 해당 클래스의 샘플 중 오답인 것들
+        class_errors = errors_df[errors_df['true_label'] == true_class].copy()
         
-        from image_classification.inference import ImageClassifierInference
+        if len(class_errors) == 0:
+            print(f"\n📌 [{true_class}] 오답 없음")
+            continue
         
-        # 모델 경로 확인
-        if not model_path or not os.path.exists(model_path):
-            raise FileNotFoundError(f"모델 파일을 찾을 수 없습니다: {model_path}")
+        # confidence(잘못 예측한 클래스의 확률) 높은 순으로 정렬
+        class_errors = class_errors.sort_values('confidence', ascending=False)
         
-        logger.info(f"사용할 모델: {model_path}")
+        total_class_samples = len(results_df[results_df['true_label'] == true_class])
+        error_rate = len(class_errors) / total_class_samples * 100
         
-        # 추론기 생성
-        inference_config = self.config.get('inference', {})
-        batch_size = inference_config.get('batch_size', 64)
+        print(f"\n📌 [{true_class}] 오답: {len(class_errors)}개 / {total_class_samples}개 (오답률: {error_rate:.1f}%)")
+        print("-" * 80)
         
-        inference_engine = ImageClassifierInference(
-            model_path=model_path,
-            device=self.device
+        # 상위 k개 출력
+        for idx, row in class_errors.head(top_k).iterrows():
+            print(f"  이미지: {row['image_path']}")
+            print(f"    정답: {row['true_label']} → 예측: {row['predicted_label']} (conf: {row['confidence']:.4f})")
+            
+            # 각 클래스 확률 표시
+            prob_str = " | ".join([f"{c}: {row[f'prob_{c}']:.3f}" for c in class_names])
+            print(f"    확률: {prob_str}")
+            print()
+        
+        all_class_errors[true_class] = class_errors
+    
+    # 예측 클래스별 분석 (어떤 클래스로 잘못 예측했는지)
+    print("\n" + "=" * 80)
+    print("🎯 잘못 예측된 클래스별 분석 (이 클래스로 잘못 예측한 것들)")
+    print("=" * 80)
+    
+    for pred_class in class_names:
+        # 이 클래스로 잘못 예측된 것들
+        wrong_as_this = errors_df[errors_df['predicted_label'] == pred_class].copy()
+        
+        if len(wrong_as_this) == 0:
+            print(f"\n🎯 [{pred_class}]로 잘못 예측된 샘플 없음")
+            continue
+        
+        wrong_as_this = wrong_as_this.sort_values('confidence', ascending=False)
+        
+        print(f"\n🎯 [{pred_class}]로 잘못 예측된 샘플: {len(wrong_as_this)}개")
+        print("-" * 80)
+        
+        # 실제 클래스 분포
+        true_dist = wrong_as_this['true_label'].value_counts()
+        print(f"  실제 클래스 분포: {dict(true_dist)}")
+        
+        # 상위 k개 출력
+        for idx, row in wrong_as_this.head(top_k).iterrows():
+            print(f"  이미지: {row['image_path']}")
+            print(f"    정답: {row['true_label']} → 예측: {row['predicted_label']} (conf: {row['confidence']:.4f})")
+            print()
+    
+    # Confusion Matrix 요약
+    print("\n" + "=" * 80)
+    print("📈 Confusion Matrix 요약")
+    print("=" * 80)
+    
+    confusion = pd.crosstab(
+        errors_df['true_label'], 
+        errors_df['predicted_label'],
+        margins=True
+    )
+    print(confusion)
+    
+    # 결과 저장 (단순화된 형식)
+    if output_path:
+        # 필요한 컬럼만 선택 (product_id가 있으면 포함)
+        cols = ['true_label', 'predicted_label', 'confidence', 'image_path']
+        if has_product_id:
+            cols.insert(0, 'product_id')
+        simple_errors = errors_df[cols].copy()
+
+        # 1차: true_label, 2차: confidence 내림차순 정렬
+        simple_errors = simple_errors.sort_values(
+            ['true_label', 'confidence'], 
+            ascending=[True, False]
         )
-        
-        # 결과를 담을 리스트
-        all_results = []
-        
-        if image_path:
-            # 단일 이미지 예측
-            logger.info(f"단일 이미지 추론: {image_path}")
-            prediction = inference_engine.predict_single(
-                image_path=image_path,
-                return_probabilities=True,
-                top_k=1
-            )
-            
-            if 'error' not in prediction:
-                all_results.append({
-                    'image_path': image_path,
-                    'predicted_class': prediction['predicted_class'],
-                    'confidence': round(prediction['confidence'], 3),  # 소숫점 셋째자리
-                    'true_class': 'N/A'  # 단일 이미지의 경우 실제 클래스 알 수 없음
-                })
-            else:
-                all_results.append({
-                    'image_path': image_path,
-                    'predicted_class': 'ERROR',
-                    'confidence': 0.0,
-                    'true_class': 'N/A'
-                })
-                
-        elif csv_path:
-            # CSV 파일에서 배치 예측
-            logger.info(f"배치 추론: {csv_path}")
-            df = pd.read_csv(csv_path)
-            if 'image_path' not in df.columns:
-                raise ValueError("CSV 파일에 'image_path' 컬럼이 필요합니다")
-            
-            image_paths = df['image_path'].tolist()
-            
-            start_time = time.time()
-            predictions = inference_engine.predict_batch(
-                image_paths=image_paths,
-                batch_size=batch_size,
-                return_probabilities=True,
-                top_k=1
-            )
-            end_time = time.time()
-            
-            total_time = end_time - start_time
-            avg_time_per_image = total_time / len(image_paths) if len(image_paths) > 0 else 0
-            logger.info(f"배치 추론 시간: 총 {total_time:.2f}초, 개당 평균 {avg_time_per_image:.3f}초")
-            
-            # true_class 컬럼이 있는지 확인
-            has_true_class = 'image_type' in df.columns
-            
-            for i, pred in enumerate(predictions):
-                true_class = df.iloc[i]['image_type'] if has_true_class and i < len(df) else 'N/A'
-                
-                if 'error' not in pred:
-                    all_results.append({
-                        'image_path': pred['image_path'],
-                        'predicted_class': pred['predicted_class'],
-                        'confidence': round(pred['confidence'], 3),  # 소숫점 셋째자리
-                        'true_class': true_class
-                    })
-                else:
-                    all_results.append({
-                        'image_path': pred['image_path'],
-                        'predicted_class': 'ERROR',
-                        'confidence': 0.0,
-                        'true_class': true_class
-                    })
-                    
-        else:
-            # 전체 데이터셋 추론 (train/validation/test 모두)
-            logger.info("📊 전체 데이터셋 추론 시작")
-            
-            data_dir = self.config.get('paths', {}).get('data_dir', 'data')
-            splits = ['train', 'validation', 'test']
-            
-            for split_name in splits:
-                split_file = os.path.join(data_dir, f'{split_name}_data.csv')
-                
-                if not os.path.exists(split_file):
-                    logger.warning(f"{split_name} 데이터 파일이 없습니다: {split_file}")
-                    continue
-                
-                logger.info(f"📊 {split_name.upper()} 데이터셋 추론 중...")
-                
-                try:
-                    split_df = pd.read_csv(split_file)
-                    image_paths = split_df['image_path'].tolist()
-                    
-                    start_time = time.time()
-                    predictions = inference_engine.predict_batch(
-                        image_paths=image_paths,
-                        batch_size=batch_size,
-                        return_probabilities=True,
-                        top_k=1
-                    )
-                    end_time = time.time()
-                    
-                    total_time = end_time - start_time
-                    avg_time_per_image = total_time / len(image_paths) if len(image_paths) > 0 else 0
-                    logger.info(f"{split_name.upper()} 추론 시간: 총 {total_time:.2f}초, 개당 평균 {avg_time_per_image:.3f}초")
-                    
-                    # 정확도 계산
-                    if 'image_type' in split_df.columns:
-                        correct = 0
-                        total = 0
-                        for i, pred in enumerate(predictions):
-                            if 'error' not in pred and i < len(split_df):
-                                actual = split_df.iloc[i]['image_type']
-                                predicted = pred['predicted_class']
-                                if actual == predicted:
-                                    correct += 1
-                                total += 1
-                        
-                        if total > 0:
-                            accuracy = correct / total
-                            logger.info(f"{split_name.upper()} 정확도: {accuracy:.4f} ({correct}/{total})")
-                    
-                    # 결과 추가
-                    for i, pred in enumerate(predictions):
-                        true_class = split_df.iloc[i]['image_type'] if i < len(split_df) else 'N/A'
-                        
-                        if 'error' not in pred:
-                            all_results.append({
-                                'image_path': pred['image_path'],
-                                'predicted_class': pred['predicted_class'],
-                                'confidence': round(pred['confidence'], 3),  # 소숫점 셋째자리
-                                'true_class': true_class
-                            })
-                        else:
-                            all_results.append({
-                                'image_path': pred['image_path'],
-                                'predicted_class': 'ERROR',
-                                'confidence': 0.0,
-                                'true_class': true_class
-                            })
-                            
-                except Exception as e:
-                    logger.error(f"{split_name} 추론 실패: {e}")
-        
-        # 결과를 DataFrame으로 변환
-        result_df = pd.DataFrame(all_results)
-        
-        # 메인 결과 파일 저장 (run 폴더 안에)
-        if output_path:
-            output_file = os.path.join(self.run_dir, os.path.basename(output_path))
-        else:
-            timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
-            output_file = os.path.join(self.run_dir, f"inference_results_{timestamp}.csv")
-        
-        result_df.to_csv(output_file, index=False, encoding='utf-8')
-        
-        # 틀린 결과만 모아서 wrong_*.csv 파일 생성
-        self._create_wrong_result_csvs(result_df)
-        
-        logger.info("=" * 60)
-        logger.info("✅ 추론 완료")
-        logger.info(f"📁 결과 파일: {output_file}")
-        logger.info(f"📊 총 {len(all_results)}개 결과")
-        logger.info("=" * 60)
-        
-        return output_file
+
+        # true_label이 바뀔 때마다 빈 줄 추가
+        rows_with_separator = []
+        prev_label = None
+        for _, row in simple_errors.iterrows():
+            if prev_label is not None and row['true_label'] != prev_label:
+                # 빈 줄 추가
+                empty_row = {col: '' for col in cols}
+                rows_with_separator.append(empty_row)
+            rows_with_separator.append(row.to_dict())
+            prev_label = row['true_label']
+
+        final_df = pd.DataFrame(rows_with_separator)
+        final_df.to_csv(output_path, index=False)
+        print(f"\n💾 오답 데이터 저장: {output_path}")
     
-    def _create_wrong_result_csvs(self, result_df: pd.DataFrame):
-        """틀린 결과만 모아서 wrong_*.csv 파일들 생성"""
-        
-        # 전체 결과에서 틀린 것만 추출 (ERROR와 N/A는 제외)
-        wrong_results = result_df[
-            (result_df['true_class'] != 'N/A') & 
-            (result_df['predicted_class'] != 'ERROR') &
-            (result_df['predicted_class'] != result_df['true_class'])
-        ].copy()
-        
-        if len(wrong_results) == 0:
-            logger.info("🎉 모든 예측이 정확합니다! wrong_*.csv 파일이 생성되지 않습니다.")
-            return
-        
-        # confidence 큰 순으로 정렬
-        wrong_results = wrong_results.sort_values('confidence', ascending=False)
-        
-        # 각 split별로 분리하여 저장
-        splits = ['train', 'valid', 'test']
-        
-        for split in splits:
-            # 해당 split의 이미지 경로들을 확인
-            if split == 'valid':
-                split_file = "data/validation_data.csv"
-            else:
-                split_file = f"data/{split}_data.csv"
-            
-            if os.path.exists(split_file):
-                try:
-                    split_df = pd.read_csv(split_file)
-                    split_image_paths = set(split_df['image_path'].tolist())
-                    
-                    # 해당 split의 틀린 결과만 필터링
-                    split_wrong = wrong_results[wrong_results['image_path'].isin(split_image_paths)]
-                    
-                    if len(split_wrong) > 0:
-                        wrong_file = os.path.join(self.run_dir, f"wrong_{split}.csv")
-                        split_wrong.to_csv(wrong_file, index=False, encoding='utf-8')
-                        logger.info(f"📄 {split.upper()} 틀린 결과: {wrong_file} ({len(split_wrong)}개)")
-                    else:
-                        logger.info(f"🎉 {split.upper()} 데이터셋: 모든 예측이 정확합니다!")
-                        
-                except Exception as e:
-                    logger.warning(f"⚠️ {split} wrong 결과 생성 실패: {e}")
-            else:
-                logger.warning(f"⚠️ {split} 데이터 파일이 없습니다: {split_file}")
-        
-        logger.info(f"📊 전체 틀린 결과: {len(wrong_results)}개 (confidence 높은 순 정렬)")
+    return results_df, errors_df
 
 
 def main():
-    """메인 함수"""
-    parser = argparse.ArgumentParser(description='이미지 타입 분류 테스트 - 단순 CSV 결과 생성')
-    parser.add_argument('--config', type=str, default='config.json',
-                       help='설정 파일 경로 (기본값: config.json)')
-    parser.add_argument('--model-path', type=str, required=True,help='사용할 모델 파일 경로 (필수)')
-    parser.add_argument('--image-path', type=str,
-                       help='추론할 이미지 경로 (단일 이미지용)')
-    parser.add_argument('--csv-path', type=str,
-                       help='배치 추론할 CSV 파일 경로')
-    parser.add_argument('--output-path', type=str,
-                       help='추론 결과 저장 경로 (CSV 파일)')
+    parser = argparse.ArgumentParser(description='오답 분석')
+    parser.add_argument('--model', type=str, 
+                       default='results/run_20260101_164825_3a3efb60/model/best_model.pth',
+                       help='모델 경로')
+    parser.add_argument('--test-data', type=str,
+                       default='data/test_data.csv',
+                       help='테스트 데이터 경로')
+    parser.add_argument('--top-k', type=int, default=40,
+                       help='각 클래스별 상위 k개 출력')
+    parser.add_argument('--output', type=str, default='error_analysis.csv',
+                       help='오답 데이터 저장 경로')
     
     args = parser.parse_args()
     
-    try:
-        # 테스트 파이프라인 생성
-        test_pipeline = ImageTypeClassificationTest(config_path=args.config)
-        
-        # 추론 실행
-        output_file = test_pipeline.run_inference(
-            image_path=args.image_path,
-            csv_path=args.csv_path,
-            output_path=args.output_path,
-            model_path=args.model_path
-        )
-        
-        print(f"\n🔍 추론 완료!")
-        print(f"📁 결과 파일: {output_file}")
-            
-    except Exception as e:
-        logger.error(f"테스트 실행 중 오류 발생: {e}")
-        sys.exit(1)
+    analyze_errors(
+        model_path=args.model,
+        test_data_path=args.test_data,
+        top_k=args.top_k,
+        output_path=args.output
+    )
 
 
 if __name__ == "__main__":

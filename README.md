@@ -28,16 +28,17 @@ pip install -r requirements.txt
 
 ## 실행 방법
 
+
+### 데이터 분할
+
+```bash
+python divide_data.py --random-state 2025
+```
+
 ### 기본 학습
 
 ```bash
-python main.py
-```
-
-### 빠른 테스트 (적은 에포크)
-
-```bash
-python main.py --quick-test
+nohup python main.py 1>log.log 2>&1 &
 ```
 
 ### 추론 실행

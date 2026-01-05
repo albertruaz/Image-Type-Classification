@@ -150,6 +150,8 @@ def stratified_split_by_product(df: pd.DataFrame,
         '_temp_category_name': 'first'  # 제품의 카테고리
     }).reset_index()
     
+    stratify_column = '_temp_category_name'
+    
     logger.info(f"제품 분포:")
     logger.info(f"  전체 제품: {len(product_summary):,}개")
     
@@ -159,22 +161,114 @@ def stratified_split_by_product(df: pd.DataFrame,
     for category, count in category_dist.items():
         logger.info(f"  {category}: {count:,}개")
     
-    # 1차 분할: train vs (val + test)
-    train_products, temp_products = train_test_split(
-        product_summary,
-        test_size=(val_ratio + test_ratio),
-        stratify=product_summary['_temp_category_name'],
-        random_state=random_state
-    )
+    # stratified split에 필요한 최소 샘플 수 (train/val/test 각각 1개 이상 필요)
+    min_samples_for_stratify = 3
     
-    # 2차 분할: val vs test
-    val_test_ratio = val_ratio / (val_ratio + test_ratio)
-    val_products, test_products = train_test_split(
-        temp_products,
-        test_size=(1 - val_test_ratio),
-        stratify=temp_products['_temp_category_name'],
-        random_state=random_state
-    )
+    # 샘플이 충분한 카테고리와 부족한 카테고리 분리
+    sufficient_categories = category_dist[category_dist >= min_samples_for_stratify].index.tolist()
+    insufficient_categories = category_dist[category_dist < min_samples_for_stratify].index.tolist()
+    
+    if insufficient_categories:
+        logger.warning(f"⚠️ 샘플이 부족한 카테고리 ({min_samples_for_stratify}개 미만): {insufficient_categories}")
+        logger.info("   이 카테고리들은 랜덤하게 분할됩니다.")
+    
+    # 충분한 카테고리의 제품들
+    sufficient_products = product_summary[product_summary[stratify_column].isin(sufficient_categories)]
+    # 부족한 카테고리의 제품들
+    insufficient_products = product_summary[product_summary[stratify_column].isin(insufficient_categories)]
+    
+    train_products_list = []
+    val_products_list = []
+    test_products_list = []
+    
+    # 1. 충분한 카테고리: stratified split
+    if len(sufficient_products) > 0:
+        try:
+            # 1차 분할: train vs (val + test)
+            train_suff, temp_suff = train_test_split(
+                sufficient_products,
+                test_size=(val_ratio + test_ratio),
+                stratify=sufficient_products[stratify_column],
+                random_state=random_state
+            )
+            
+            # 2차 분할: val vs test (stratify 가능하면 사용)
+            val_test_ratio = val_ratio / (val_ratio + test_ratio)
+            temp_category_counts = temp_suff[stratify_column].value_counts()
+            can_stratify_second = all(temp_category_counts >= 2)
+            
+            if can_stratify_second:
+                val_suff, test_suff = train_test_split(
+                    temp_suff,
+                    test_size=(1 - val_test_ratio),
+                    stratify=temp_suff[stratify_column],
+                    random_state=random_state
+                )
+            else:
+                # stratify 불가능하면 랜덤 분할
+                logger.warning("⚠️ 2차 분할에서 stratify 불가능, 랜덤 분할 사용")
+                val_suff, test_suff = train_test_split(
+                    temp_suff,
+                    test_size=(1 - val_test_ratio),
+                    random_state=random_state
+                )
+            
+            train_products_list.append(train_suff)
+            val_products_list.append(val_suff)
+            test_products_list.append(test_suff)
+        except ValueError as e:
+            # stratified split 실패 시 랜덤 분할로 대체
+            logger.warning(f"⚠️ Stratified split 실패, 랜덤 분할로 대체: {e}")
+            train_suff, temp_suff = train_test_split(
+                sufficient_products,
+                test_size=(val_ratio + test_ratio),
+                random_state=random_state
+            )
+            val_test_ratio = val_ratio / (val_ratio + test_ratio)
+            val_suff, test_suff = train_test_split(
+                temp_suff,
+                test_size=(1 - val_test_ratio),
+                random_state=random_state
+            )
+            train_products_list.append(train_suff)
+            val_products_list.append(val_suff)
+            test_products_list.append(test_suff)
+    
+    # 2. 부족한 카테고리: 랜덤 분할 (stratify 없이)
+    if len(insufficient_products) > 0:
+        # 1차 분할: train vs (val + test)
+        if len(insufficient_products) >= 2:
+            train_insuff, temp_insuff = train_test_split(
+                insufficient_products,
+                test_size=(val_ratio + test_ratio),
+                random_state=random_state
+            )
+            
+            # 2차 분할: val vs test
+            if len(temp_insuff) >= 2:
+                val_insuff, test_insuff = train_test_split(
+                    temp_insuff,
+                    test_size=(1 - val_test_ratio),
+                    random_state=random_state
+                )
+            else:
+                # temp가 1개면 val에 할당
+                val_insuff = temp_insuff
+                test_insuff = pd.DataFrame(columns=insufficient_products.columns)
+        else:
+            # 1개면 train에 할당
+            train_insuff = insufficient_products
+            val_insuff = pd.DataFrame(columns=insufficient_products.columns)
+            test_insuff = pd.DataFrame(columns=insufficient_products.columns)
+        
+        train_products_list.append(train_insuff)
+        val_products_list.append(val_insuff)
+        test_products_list.append(test_insuff)
+    
+    # 결과 합치기
+    train_products = pd.concat(train_products_list, ignore_index=True) if train_products_list else pd.DataFrame()
+    val_products = pd.concat(val_products_list, ignore_index=True) if val_products_list else pd.DataFrame()
+    test_products = pd.concat(test_products_list, ignore_index=True) if test_products_list else pd.DataFrame()
     
     logger.info(f"제품 분할 완료:")
     logger.info(f"  Train: {len(train_products):,}개 제품")

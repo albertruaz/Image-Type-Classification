@@ -111,15 +111,71 @@ class ImageClassifierInference:
         self.config = None
         self.class_names = None
         self.num_classes = None
+        self.class_thresholds = None
         self.transforms = None
         self.base_image_path = None
         self.base_image_url = None
         self.is_remote = False
         
         self._load_model()
+        self.class_thresholds = self._normalize_class_thresholds(
+            self.config.get('inference', {}).get('class_thresholds')
+        )
         self._setup_transforms()
         
         logger.info(f"추론기 초기화 완료 - 디바이스: {self.device}")
+        if self.class_thresholds is not None:
+            logger.info("클래스별 threshold 적용 추론 활성화")
+
+    def _normalize_class_thresholds(self, class_thresholds):
+        """클래스별 threshold를 클래스 순서에 맞게 정렬"""
+        if not class_thresholds:
+            return None
+
+        default_threshold = self.config.get('inference', {}).get('confidence_threshold')
+
+        if isinstance(class_thresholds, dict):
+            thresholds = []
+            missing = []
+            for name in self.class_names:
+                if name in class_thresholds:
+                    thresholds.append(float(class_thresholds[name]))
+                elif default_threshold is not None:
+                    thresholds.append(float(default_threshold))
+                else:
+                    missing.append(name)
+
+            if missing:
+                missing_str = ", ".join(missing)
+                logger.warning(f"class_thresholds에 누락된 클래스가 있습니다: {missing_str}")
+                return None
+
+            return thresholds
+
+        if isinstance(class_thresholds, (list, tuple, np.ndarray)):
+            if len(class_thresholds) != self.num_classes:
+                logger.warning("class_thresholds 길이가 클래스 수와 일치하지 않습니다.")
+                return None
+            return [float(value) for value in class_thresholds]
+
+        logger.warning("class_thresholds 형식이 올바르지 않아 무시합니다.")
+        return None
+
+    def _select_label_with_thresholds(self, probabilities: np.ndarray) -> int:
+        """클래스별 threshold를 반영해 예측 라벨 선택"""
+        if self.class_thresholds is None:
+            return int(np.argmax(probabilities))
+
+        thresholds = np.array(self.class_thresholds, dtype=float)
+        if thresholds.shape[0] != probabilities.shape[0]:
+            return int(np.argmax(probabilities))
+
+        passed = probabilities >= thresholds
+        if np.any(passed):
+            masked = np.where(passed, probabilities, -np.inf)
+            return int(np.argmax(masked))
+
+        return int(np.argmax(probabilities))
     
     def _load_model(self):
         """모델 로드"""
@@ -279,7 +335,7 @@ class ImageClassifierInference:
                 
                 # CPU로 이동
                 probabilities = probabilities.cpu().numpy()[0]
-                predicted_class_idx = np.argmax(probabilities)
+                predicted_class_idx = self._select_label_with_thresholds(probabilities)
                 predicted_class = self.class_names[predicted_class_idx]
                 confidence = float(probabilities[predicted_class_idx])
             
@@ -367,7 +423,7 @@ class ImageClassifierInference:
                     # 배치 결과 처리
                     for i, image_path in enumerate(batch_paths):
                         probs = probabilities[i]
-                        predicted_class_idx = np.argmax(probs)
+                        predicted_class_idx = self._select_label_with_thresholds(probs)
                         predicted_class = self.class_names[predicted_class_idx]
                         confidence = float(probs[predicted_class_idx])
                         

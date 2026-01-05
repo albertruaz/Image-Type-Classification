@@ -128,6 +128,7 @@ class ImageClassifierTrainer:
         # wandb 설정
         self.wandb_enabled = config.get('logging', {}).get('use_wandb', False)
         self.wandb_project = config.get('logging', {}).get('wandb_project', 'image-classification')
+        self.wandb_prefix = config.get('logging', {}).get('wandb_prefix', '')
         
         logger.info(f"트레이너 초기화 완료 - 디바이스: {self.device}")
         if self.wandb_enabled and WANDB_AVAILABLE:
@@ -143,7 +144,7 @@ class ImageClassifierTrainer:
         if use_focal_loss:
             # Focal Loss 사용
             alpha = training_config.get('focal_alpha', 0.25)
-            gamma = training_config.get('focal_gamma', 2.0)
+            gamma = self._resolve_focal_gamma(training_config.get('focal_gamma', 2.0))
             
             if self.use_class_weights:
                 # 클래스 가중치 계산
@@ -168,6 +169,28 @@ class ImageClassifierTrainer:
                 logger.info("표준 CrossEntropyLoss 설정")
         
         return criterion
+
+    def _resolve_focal_gamma(self, gamma):
+        """클래스별 focal gamma 설정을 정규화"""
+        if isinstance(gamma, dict):
+            class_names = self.config.get('data', {}).get('class_names', [])
+            if not class_names:
+                raise ValueError("class_names가 없어 per-class focal_gamma를 적용할 수 없습니다.")
+
+            missing = [name for name in class_names if name not in gamma]
+            if missing:
+                missing_str = ", ".join(missing)
+                raise ValueError(f"focal_gamma 설정에 누락된 클래스가 있습니다: {missing_str}")
+
+            return [float(gamma[name]) for name in class_names]
+
+        if isinstance(gamma, (list, tuple)):
+            class_names = self.config.get('data', {}).get('class_names', [])
+            if class_names and len(gamma) != len(class_names):
+                raise ValueError("focal_gamma 길이가 class_names 길이와 일치하지 않습니다.")
+            return list(gamma)
+
+        return gamma
     
     def _compute_class_weights(self) -> torch.Tensor:
         """클래스 가중치 계산"""
@@ -418,7 +441,7 @@ class ImageClassifierTrainer:
             
             # wandb 로깅
             if self.wandb_enabled and WANDB_AVAILABLE and wandb.run:
-                wandb.log({
+                metrics = {
                     'epoch': epoch,
                     'train_loss': train_loss,
                     'train_accuracy': train_acc,
@@ -429,7 +452,10 @@ class ImageClassifierTrainer:
                     'best_val_loss': self.best_val_loss,
                     'best_val_acc': self.best_val_acc,
                     'epochs_without_improvement': self.epochs_without_improvement
-                })
+                }
+                if self.wandb_prefix:
+                    metrics = {f"{self.wandb_prefix}{key}": value for key, value in metrics.items()}
+                wandb.log(metrics)
             
             # 조기 종료 확인
             if self.epochs_without_improvement >= self.patience:

@@ -5,6 +5,7 @@ test_result/
 results/
 test_result/
 test_result/
+tuning_results/
 
 .DS_Store
 

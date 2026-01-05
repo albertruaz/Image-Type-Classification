@@ -39,7 +39,8 @@ class ModelEvaluator:
                  test_loader: DataLoader,
                  class_names: List[str],
                  device: torch.device = None,
-                 save_dir: str = 'results'):
+                 save_dir: str = 'results',
+                 class_thresholds: Optional[Dict[str, float]] = None):
         """
         Args:
             model: 평가할 모델
@@ -62,6 +63,7 @@ class ModelEvaluator:
                 self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         self.save_dir = save_dir
         self.num_classes = len(class_names)
+        self.class_thresholds = self._normalize_class_thresholds(class_thresholds)
         
         # 결과 저장 디렉토리 생성 (안전성 체크)
         if save_dir and isinstance(save_dir, str):
@@ -76,6 +78,46 @@ class ModelEvaluator:
         
         logger.info(f"평가기 초기화 완료 - 디바이스: {self.device}")
         logger.info(f"클래스 수: {self.num_classes}, 테스트 샘플: {len(test_loader.dataset)}")
+        if self.class_thresholds is not None:
+            logger.info("클래스별 threshold 적용 평가 활성화")
+
+    def _normalize_class_thresholds(self, class_thresholds: Optional[Dict[str, float]]):
+        """클래스별 threshold를 클래스 순서에 맞게 정렬"""
+        if not class_thresholds:
+            return None
+
+        if isinstance(class_thresholds, dict):
+            missing = [name for name in self.class_names if name not in class_thresholds]
+            if missing:
+                missing_str = ", ".join(missing)
+                logger.warning(f"class_thresholds에 누락된 클래스가 있습니다: {missing_str}")
+                return None
+            return [float(class_thresholds[name]) for name in self.class_names]
+
+        if isinstance(class_thresholds, (list, tuple, np.ndarray)):
+            if len(class_thresholds) != self.num_classes:
+                logger.warning("class_thresholds 길이가 클래스 수와 일치하지 않습니다.")
+                return None
+            return [float(value) for value in class_thresholds]
+
+        logger.warning("class_thresholds 형식이 올바르지 않아 무시합니다.")
+        return None
+
+    def _select_label_with_thresholds(self, probabilities: np.ndarray) -> int:
+        """클래스별 threshold를 반영해 예측 라벨 선택"""
+        if self.class_thresholds is None:
+            return int(np.argmax(probabilities))
+
+        thresholds = np.array(self.class_thresholds, dtype=float)
+        if thresholds.shape[0] != probabilities.shape[0]:
+            return int(np.argmax(probabilities))
+
+        passed = probabilities >= thresholds
+        if np.any(passed):
+            masked = np.where(passed, probabilities, -np.inf)
+            return int(np.argmax(masked))
+
+        return int(np.argmax(probabilities))
     
     def predict(self, return_probabilities: bool = False) -> Tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
         """
@@ -102,14 +144,22 @@ class ModelEvaluator:
                 # 예측
                 outputs = self.model(data)
                 probabilities = torch.softmax(outputs, dim=1)
-                _, predicted = torch.max(outputs, 1)
                 
                 # 결과 저장
                 all_true_labels.extend(target.cpu().numpy())
-                all_predicted_labels.extend(predicted.cpu().numpy())
-                
+                probabilities_np = probabilities.cpu().numpy()
+                if self.class_thresholds is None:
+                    _, predicted = torch.max(outputs, 1)
+                    all_predicted_labels.extend(predicted.cpu().numpy())
+                else:
+                    predicted_labels = [
+                        self._select_label_with_thresholds(probs)
+                        for probs in probabilities_np
+                    ]
+                    all_predicted_labels.extend(predicted_labels)
+
                 if return_probabilities:
-                    all_probabilities.extend(probabilities.cpu().numpy())
+                    all_probabilities.extend(probabilities_np)
         
         true_labels = np.array(all_true_labels)
         predicted_labels = np.array(all_predicted_labels)
