@@ -159,14 +159,16 @@ class ImageClassifierTrainer:
                 criterion = FocalLoss(alpha=alpha, gamma=gamma)
                 logger.info(f"Focal Loss 설정 (α={alpha}, γ={gamma})")
         else:
-            # 표준 Cross Entropy 사용
+            # 표준 Cross Entropy 사용 (Label Smoothing 지원)
+            label_smoothing = training_config.get('label_smoothing', 0.0)
+            
             if self.use_class_weights:
                 class_weights = self._compute_class_weights()
-                criterion = nn.CrossEntropyLoss(weight=class_weights)
-                logger.info("클래스 가중치를 사용한 CrossEntropyLoss 설정")
+                criterion = nn.CrossEntropyLoss(weight=class_weights, label_smoothing=label_smoothing)
+                logger.info(f"클래스 가중치를 사용한 CrossEntropyLoss 설정 (Label Smoothing: {label_smoothing})")
             else:
-                criterion = nn.CrossEntropyLoss()
-                logger.info("표준 CrossEntropyLoss 설정")
+                criterion = nn.CrossEntropyLoss(label_smoothing=label_smoothing)
+                logger.info(f"표준 CrossEntropyLoss 설정 (Label Smoothing: {label_smoothing})")
         
         return criterion
 

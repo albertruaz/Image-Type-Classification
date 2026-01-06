@@ -17,39 +17,44 @@
   "model": {
     "backbone": "efficientnet_b0",
     "pretrained": true,
-    "dropout_rate": 0.2,
-    "hidden_dim": null,
-    "freeze_backbone_epochs": 5,
-    "unfreeze_backbone_epoch": 10
+    "dropout_rate": 0.4,
+    "hidden_dim": 512,
+    "freeze_backbone_epochs": 3,
+    "unfreeze_backbone_epoch": 5
   },
   "training": {
     "batch_size": 32,
-    "epochs": 20,
+    "epochs": 25,
     "learning_rate": 1e-4,
     "weight_decay": 1e-4,
     "optimizer": "adamw",
     "scheduler": "cosine",
     "scheduler_patience": 7,
-    "warmup_epochs": 1,
-    "patience": 10,
+    "warmup_epochs": 3,
+    "patience": 12,
     "min_delta": 0.001,
     "early_stopping": true,
-    "use_class_weights": false,
+    "use_class_weights": true,
     "gradient_clip_norm": 1.0,
-    "focal_loss": true,
+    "focal_loss": false,
     "focal_alpha": 0.25,
-    "focal_gamma": 1.0
+    "focal_gamma": 2.0,
+    "label_smoothing": 0.1
   },
   "augmentation": {
-    "image_size": 224,
-    "strength": "medium",
+    "image_size": 256,
+    "strength": "strong",
     "horizontal_flip": true,
-    "rotation": 10,
+    "rotation": 15,
     "color_jitter": true,
-    "brightness": 0.2,
-    "contrast": 0.2,
-    "saturation": 0.2,
-    "hue": 0.1
+    "brightness": 0.3,
+    "contrast": 0.3,
+    "saturation": 0.3,
+    "hue": 0.1,
+    "random_erasing": true,
+    "random_erasing_prob": 0.2,
+    "mixup_alpha": 0.2,
+    "cutmix_alpha": 0.2
   },
   "validation": {
     "val_frequency": 1,
@@ -63,7 +68,7 @@
     "print_confusion_matrix": true,
     "save_predictions": true,
     "use_wandb": true,
-    "wandb_project": "four-type-classification",
+    "wandb_project": "image-type-classification",
     "wandb_entity": "vingle"
   },
   "inference": {
@@ -78,14 +83,15 @@
     "result_dir": "results",
     "log_dir": "logs",
     "checkpoint_dir": "checkpoints",
-    "auto_create_dirs": true
+    "output_dir": "outputs"
   },
   "system": {
-    "device": "auto",
     "num_workers": 4,
+    "device": "auto",
+    "mixed_precision": true,
+    "seed": 42,
     "pin_memory": true,
-    "mixed_precision": false,
-    "compile_model": false,
-    "benchmark": true
+    "persistent_workers": true,
+    "prefetch_factor": 2
   }
 }

@@ -192,31 +192,16 @@ class ImageTransforms:
     
     @staticmethod
     def get_train_transforms(image_size: int = 224, augmentation_strength: str = 'medium') -> transforms.Compose:
-        """학습용 이미지 변환 (데이터 증강 포함)"""
-        transform_list = [
-            transforms.Resize((image_size + 32, image_size + 32)),
-            transforms.RandomCrop(image_size),
-            transforms.RandomHorizontalFlip(p=0.5),
-        ]
+        """학습용 이미지 변환 (데이터 증강 없음)"""
+        # 사용자의 통찰대로 '흰색 배경의 유무/비율'이 Full shot/Detail shot 구분에 핵심적인 Feature임.
+        # ColorJitter로 밝기나 대비를 건드리면 이 가정이 깨질 수 있음.
+        # 따라서 오직 '크기 조정'만 수행하여 원본 이미지의 특성을 100% 보존함.
         
-        if augmentation_strength in ['medium', 'strong']:
-            transform_list.extend([
-                transforms.RandomRotation(degrees=10),
-                transforms.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),
-            ])
-        
-        if augmentation_strength == 'strong':
-            transform_list.extend([
-                transforms.RandomAffine(degrees=15, translate=(0.1, 0.1), scale=(0.9, 1.1)),
-                transforms.RandomPerspective(distortion_scale=0.2, p=0.3),
-            ])
-        
-        transform_list.extend([
+        return transforms.Compose([
+            transforms.Resize((image_size, image_size)),
             transforms.ToTensor(),
             transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
         ])
-        
-        return transforms.Compose(transform_list)
     
     @staticmethod
     def get_val_transforms(image_size: int = 224) -> transforms.Compose:

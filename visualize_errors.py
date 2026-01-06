@@ -169,6 +169,11 @@ def visualize_errors_by_label(csv_path: str,
         
         if n_samples == 0:
             continue
+            
+        # 클래스별 폴더 생성 (출력 디렉토리/클래스명)
+        safe_label = str(true_label).replace('/', '_').replace(' ', '_')
+        label_dir = os.path.join(output_dir, safe_label)
+        os.makedirs(label_dir, exist_ok=True)
         
         # samples_per_image개씩 나누어 이미지 생성
         n_images = (n_samples + samples_per_image - 1) // samples_per_image
@@ -182,24 +187,26 @@ def visualize_errors_by_label(csv_path: str,
             # 이미지 제목
             title = f"True Label: {true_label} (Part {img_idx + 1}/{n_images})"
             
-            # 저장 경로
-            safe_label = true_label.replace('/', '_').replace(' ', '_')
-            save_path = os.path.join(output_dir, f"{safe_label}_part{img_idx + 1}.png")
+            # 저장 경로 (클래스 폴더 내부)
+            save_path = os.path.join(label_dir, f"part{img_idx + 1}.png")
             
             # 그리드 이미지 생성
             create_error_grid(samples, cloudfront_domain, title, save_path, samples_per_image)
     
-    print(f"\n모든 이미지가 '{output_dir}' 디렉토리에 저장되었습니다.")
+    print(f"\n모든 이미지가 '{output_dir}' 디렉토리 내 각 클래스 폴더에 저장되었습니다.")
 
 
 def main():
     import argparse
+    import glob
     
     parser = argparse.ArgumentParser(description='Error Analysis Visualization')
-    parser.add_argument('--csv', type=str, default='error_analysis.csv',
-                        help='error_analysis.csv 파일 경로')
-    parser.add_argument('--output', type=str, default='error_visualizations',
-                        help='출력 디렉토리')
+    parser.add_argument('--csv', type=str, default=None,
+                        help='error_analysis.csv 파일 경로 (지정하지 않으면 error_results 폴더의 모든 csv 처리)')
+    parser.add_argument('--input-dir', type=str, default='error_results',
+                        help='CSV 파일을 찾을 디렉토리')
+    parser.add_argument('--output', type=str, default='error_results',
+                        help='출력 디렉토리 (기본값: error_results)')
     parser.add_argument('--k', type=int, default=40,
                         help='각 true_label별 샘플 수')
     parser.add_argument('--per-image', type=int, default=4,
@@ -207,13 +214,49 @@ def main():
     
     args = parser.parse_args()
     
-    visualize_errors_by_label(
-        csv_path=args.csv,
-        output_dir=args.output,
-        k=args.k,
-        samples_per_image=args.per_image
-    )
+    # 처리할 CSV 파일 목록 결정
+    csv_files = []
+    if args.csv:
+        csv_files.append(args.csv)
+    elif os.path.exists(args.input_dir):
+        # input_dir에서 csv 파일 찾기
+        found_files = glob.glob(os.path.join(args.input_dir, '*.csv'))
+        csv_files.extend(found_files)
+        if not csv_files:
+            print(f"'{args.input_dir}' 디렉토리에서 CSV 파일을 찾을 수 없습니다.")
+    else:
+        # 호환성을 위해 현재 디렉토리의 error_analysis.csv 확인
+        if os.path.exists('error_analysis.csv'):
+            csv_files.append('error_analysis.csv')
+            
+    if not csv_files:
+        print("처리할 CSV 파일이 없습니다.")
+        return
 
+    print(f"총 {len(csv_files)}개의 CSV 파일을 처리합니다: {csv_files}")
+    
+    for csv_path in csv_files:
+        print(f"\nProcessing CSV: {csv_path}")
+        
+        # 출력 디렉토리 결정: 지정된 output dir / csv 파일명 (확장자 제외)
+        csv_name = os.path.splitext(os.path.basename(csv_path))[0]
+        # error_results 폴더 안에 csv 이름으로 폴더를 만들고 그 안에 labeling
+        # 사용자가 "내부의 폴더별로" 라고 했으므로, csv별로 폴더를 나누는 게 안전함.
+        # 하지만 error_results/error_analysis_train.csv -> error_results/error_analysis_train/label_name/... 가 적절함.
+        
+        # 만약 args.output이 csv가 있는 폴더와 같다면 (error_results), 하위 폴더 생성
+        if os.path.abspath(args.output) == os.path.abspath(os.path.dirname(csv_path)):
+             current_output_dir = os.path.join(args.output, csv_name)
+        else:
+             # 다른 output dir이 지정된 경우
+             current_output_dir = os.path.join(args.output, csv_name)
+             
+        visualize_errors_by_label(
+            csv_path=csv_path,
+            output_dir=current_output_dir,
+            k=args.k,
+            samples_per_image=args.per_image
+        )
 
 if __name__ == '__main__':
     main()

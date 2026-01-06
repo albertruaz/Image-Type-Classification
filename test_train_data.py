@@ -213,25 +213,48 @@ def analyze_errors(model_path: str, test_data_path: str, top_k: int = 10, output
 
 
 def main():
-    parser = argparse.ArgumentParser(description='오답 분석')
+    parser = argparse.ArgumentParser(description='오답 분석 (Train/Validation)')
     parser.add_argument('--model', type=str, 
                        default='results/run_20260106_140031_32d4e2c3/model/best_model.pth',
                        help='모델 경로')
-    parser.add_argument('--test-data', type=str,
-                       default='data/test_data.csv',
-                       help='테스트 데이터 경로')
+    
+    # Train data config
+    parser.add_argument('--train-data', type=str,
+                       default='data/train_data.csv',
+                       help='학습 데이터 경로')
+    parser.add_argument('--output-train', type=str, default='error_results/error_analysis_train.csv',
+                       help='학습 데이터 오답 저장 경로')
+    
+    # Validation data config
+    parser.add_argument('--val-data', type=str,
+                       default='data/validation_data.csv',
+                       help='검증 데이터 경로')
+    parser.add_argument('--output-val', type=str, default='error_results/error_analysis_val.csv',
+                       help='검증 데이터 오답 저장 경로')
+                       
     parser.add_argument('--top-k', type=int, default=40,
                        help='각 클래스별 상위 k개 출력')
-    parser.add_argument('--output', type=str, default='error_results/error_analysis_test.csv',
-                       help='오답 데이터 저장 경로')
     
     args = parser.parse_args()
     
+    print("=" * 100)
+    print("🚀 학습 데이터(Train Data) 오답 분석 시작")
+    print("=" * 100)
     analyze_errors(
         model_path=args.model,
-        test_data_path=args.test_data,
+        test_data_path=args.train_data,
         top_k=args.top_k,
-        output_path=args.output
+        output_path=args.output_train
+    )
+    
+    print("\n" + "=" * 100)
+    print("🚀 검증 데이터(Validation Data) 오답 분석 시작")
+    print("=" * 100)
+    analyze_errors(
+        model_path=args.model,
+        test_data_path=args.val_data,
+        top_k=args.top_k,
+        output_path=args.output_val
     )
 
 
